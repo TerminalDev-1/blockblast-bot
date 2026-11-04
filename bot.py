@@ -132,26 +132,45 @@ def recover_screen(im,unknown_count):
     if close_accessible_ad(): time.sleep(3); return
     print('Unknown screen: waiting to preserve the current game.',flush=True); time.sleep(10)
 
+def _slot_piece(im,slot,threshold,background):
+    """Read one tray slot at a given threshold: None (empty), a piece, or 'bad'."""
+    left,right=TRAYS[slot]
+    crop=im[1320:1610,left:right]
+    mask=(np.linalg.norm(crop.astype(np.float32)-background,axis=2)>threshold).astype(np.uint8)
+    n,labels,stats,centroids=cv2.connectedComponentsWithStats(mask,8)
+    components=[(x,y,w,h,area) for x,y,w,h,area in stats[1:] if area>300 and w>=20 and h>=20]
+    if not components: return None
+    x0=min(a[0] for a in components); y0=min(a[1] for a in components)
+    x1=max(a[0]+a[2] for a in components); y1=max(a[1]+a[3] for a in components)
+    if x1-x0>275 or y1-y0>275: return 'bad'
+    # Tray cells are 50 px; a real piece's box (plus a small shadow) fits that grid.
+    if any(min(d%50,50-d%50)>14 for d in (x1-x0,y1-y0)): return 'bad'
+    cells=[]
+    for y in range(round((y1-y0)/50)):
+        for x in range(round((x1-x0)/50)):
+            patch=mask[y0+y*50+5:y0+y*50+45,x0+x*50+5:x0+x*50+45]
+            if patch.size and np.mean(patch)>.40: cells.append((x,y))
+    if not cells or len(cells)>9: return 'bad'
+    return {'slot':slot,'cells':cells,'origin':(left+x0,1320+y0)}
+
 def read_pieces(im):
     pieces=[]
     for slot,(left,right) in enumerate(TRAYS):
-        crop=im[1320:1610,left:right]
-        background=np.median(crop[:40,:].reshape(-1,3),axis=0)
-        mask=(np.linalg.norm(crop.astype(np.float32)-background,axis=2)>45).astype(np.uint8)
-        n,labels,stats,centroids=cv2.connectedComponentsWithStats(mask,8)
-        components=[(x,y,w,h,area) for x,y,w,h,area in stats[1:] if area>300 and w>=20 and h>=20]
-        if not components: continue
-        x0=min(a[0] for a in components); y0=min(a[1] for a in components)
-        x1=max(a[0]+a[2] for a in components); y1=max(a[1]+a[3] for a in components)
-        if x1-x0>275 or y1-y0>275: raise RuntimeError(f'Unrecognized tray {slot+1}.')
-        cells=[]
-        for y in range(round((y1-y0)/50)):
-            for x in range(round((x1-x0)/50)):
-                xx=x0+x*50+20; yy=y0+y*50+20
-                patch=mask[y0+y*50+5:y0+y*50+45,x0+x*50+5:x0+x*50+45]
-                if patch.size and np.mean(patch)>.40: cells.append((x,y))
-        if not cells or len(cells)>9: raise RuntimeError(f'Unrecognized piece in tray {slot+1}.')
-        pieces.append({'slot':slot,'cells':cells,'origin':(left+x0,1320+y0)})
+        # Background and its noise come from the strip just above the tray, which pieces
+        # never reach. Some themes draw pieces close to the background colour (pink on
+        # pink), others have textured backgrounds (wood), so the threshold adapts, and
+        # other thresholds are tried before giving up.
+        strip=im[1290:1325,left:right].astype(np.float32)
+        background=np.median(strip.reshape(-1,3),axis=0)
+        noise=float(np.percentile(np.linalg.norm(strip-background,axis=2),99))
+        adaptive=min(45.0,max(18.0,noise*1.6+6))
+        result='bad'
+        for threshold in (adaptive,45,30,24,60,18,80):
+            if threshold<noise*1.2: continue
+            result=_slot_piece(im,slot,threshold,background)
+            if result!='bad': break
+        if result=='bad': raise RuntimeError(f'Unrecognized piece in tray {slot+1}.')
+        if result: pieces.append(result)
     return pieces
 
 def place(board,cells,ox,oy):
@@ -255,7 +274,7 @@ def main():
     ap.add_argument('--pickup-y',type=int,default=PICKUP_Y); ap.add_argument('--swipe-ms',type=int,default=300)
     args=ap.parse_args()
     corrections={}; turn=0; unknown_count=0; failed_board=None; failed_moves=set()
-    plan_seq=[]; im=None; started=time.time(); stuck_since=None
+    plan_seq=[]; im=None; started=time.time(); stuck_since=None; tray_errors=0
     while turn<args.max_moves:
         if im is None: im=capture()
         if not is_board(im):
@@ -268,7 +287,10 @@ def main():
         unknown_count=0; board=read_board(im)
         try: pieces=read_pieces(im)
         except RuntimeError as e:
+            tray_errors+=1
+            if tray_errors==20: save_unknown(im)  # a new theme to calibrate
             log(str(e),'Waiting for screen to settle.'); time.sleep(.5); im=None; continue
+        tray_errors=0
         if board!=failed_board: failed_board=board; failed_moves.clear()
         if not pieces: log('Waiting for pieces or game-over screen.'); time.sleep(1); im=None; plan_seq=[]; continue
         by_slot={p['slot']:p for p in pieces}

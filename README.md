@@ -2,7 +2,7 @@
 
 A Python bot that plays the mobile puzzle game **Block Blast** (Classic mode) on an Android device over USB. It reads the board and tray from screenshots, plans moves with a bitboard search, and drags pieces with ADB. It plays continuously: it chases the best score, keeps going after it beats it, and starts a new game when it loses.
 
-> Unofficial fan project. Not affiliated with or endorsed by the makers of Block Blast. Automating a game may break its terms of service; use at your own risk.
+> Unofficial fan project, not affiliated with the makers of Block Blast.
 
 ## How it works
 
