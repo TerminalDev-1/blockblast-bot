@@ -1,20 +1,17 @@
 """Pick which connection the bots use to reach the tablet: USB when it's plugged in
-(faster screenshots), wireless debugging otherwise.
+(faster screenshots), Android's "Wireless debugging" otherwise.
 
-    python adbwifi.py setup    # once, with the USB cable plugged in
+    python adbwifi.py pair     # once: pair this PC with the tablet over Wi-Fi
     python adbwifi.py          # show which connection would be used
 
-`setup` switches the tablet's adb to listen on Wi-Fi (port 5555), connects to it
-and remembers the address in ~/.adb-wifi-tablet. The tablet forgets this mode when
-it reboots; run `setup` again with the cable after a reboot.
+Pairing is one-time. After it, whenever the tablet's Wireless debugging is on and it
+is on the same Wi-Fi as the PC, adb finds it on the network by itself (mDNS), so
+nothing has to be re-run after a reboot.
 
 Bots call `ensure()` at startup and whenever adb stops answering. It sets
 ANDROID_SERIAL so every later `adb` command goes to the chosen connection.
 """
 import os, re, subprocess, sys, time
-
-ADDR_FILE = os.path.join(os.path.expanduser('~'), '.adb-wifi-tablet')
-PORT = 5555
 
 
 def _adb(*args, timeout=15):
@@ -24,43 +21,42 @@ def _adb(*args, timeout=15):
 
 def devices():
     lines = _adb('devices').stdout.splitlines()[1:]
-    return [l.split()[0] for l in lines if l.strip().endswith('\tdevice') or l.strip().endswith(' device')]
+    return [l.split()[0] for l in lines if l.split()[1:2] == ['device']]
 
 
 def is_wireless(serial):
     return ':' in serial or '._adb' in serial
 
 
-def saved_address():
-    try:
-        with open(ADDR_FILE, encoding='utf-8') as f: return f.read().strip() or None
-    except OSError:
-        return None
+def discover():
+    """Connect to any paired tablet that announces itself on the network."""
+    out = _adb('mdns', 'services', timeout=10).stdout
+    for addr in re.findall(r'_adb-tls-connect\._tcp\.?\s+(\d+\.\d+\.\d+\.\d+:\d+)', out):
+        _adb('connect', addr, timeout=10)
 
 
-def setup():
-    usb = [d for d in devices() if not is_wireless(d)]
-    if not usb: sys.exit('Plug the tablet in by USB (with USB debugging on) and run this again.')
-    serial = usb[0]
-    out = subprocess.run(['adb', '-s', serial, 'shell', 'ip', '-f', 'inet', 'addr', 'show', 'wlan0'],
-                         capture_output=True, text=True, timeout=15).stdout
-    m = re.search(r'inet (\d+\.\d+\.\d+\.\d+)', out)
-    if not m: sys.exit('The tablet does not seem to be on Wi-Fi.')
-    addr = f'{m.group(1)}:{PORT}'
-    print(f'Tablet Wi-Fi address: {addr}. Switching adb to wireless mode...')
-    subprocess.run(['adb', '-s', serial, 'tcpip', str(PORT)], timeout=20)
+def pair():
+    print('One-time pairing. On the tablet:\n'
+          '  Settings > Additional settings > Developer options > Wireless debugging: turn it on,\n'
+          '  then tap "Pair device with pairing code".\n'
+          'The tablet shows an IP address & port and a 6-digit code.')
+    addr = input('IP address & port shown under the code (e.g. 192.168.1.20:37099): ').strip()
+    code = input('6-digit pairing code: ').strip()
+    out = _adb('pair', addr, code, timeout=30)
+    print((out.stdout + out.stderr).strip())
+    if 'Successfully paired' not in out.stdout:
+        sys.exit('Pairing failed. Check that the PC and tablet are on the same Wi-Fi and try again.')
     for _ in range(10):
-        time.sleep(1.5)
-        if 'connected' in _adb('connect', addr, timeout=10).stdout and addr in devices(): break
-    else:
-        sys.exit(f'Could not connect to {addr}. Is the PC on the same Wi-Fi network as the tablet?')
-    with open(ADDR_FILE, 'w', encoding='utf-8') as f: f.write(addr)
-    print(f'Connected over Wi-Fi ({addr}). You can unplug the cable; the bots will reconnect by themselves.')
+        discover(); time.sleep(2)
+        wifi = [d for d in devices() if is_wireless(d)]
+        if wifi:
+            print(f'Connected over Wi-Fi ({wifi[0]}). From now on the bots find the tablet by themselves.'); return
+    print('Paired. The connection will appear within a minute; the bots will pick it up.')
 
 
 def ensure(wait=None):
-    """Choose a connected tablet (USB first, then Wi-Fi, reconnecting to the saved
-    address if needed), export it as ANDROID_SERIAL and return it. Waits as long as
+    """Choose a connected tablet (USB first, then Wi-Fi, discovering it on the
+    network if needed), export it as ANDROID_SERIAL and return it. Waits as long as
     it takes (the tablet may be charging after running flat) unless `wait` seconds
     are given."""
     t0 = time.time(); said = False
@@ -74,16 +70,20 @@ def ensure(wait=None):
                 print(f'Using tablet over {"Wi-Fi" if is_wireless(pick) else "USB"} ({pick}).', flush=True)
             os.environ['ANDROID_SERIAL'] = pick
             return pick
-        addr = saved_address()
-        if addr: _adb('connect', addr, timeout=10)
+        discover()
         if not said:
-            print('Tablet not reachable; waiting for USB or Wi-Fi'
-                  + (f' ({addr})' if addr else ' (run "python adbwifi.py setup" once with the cable)') + '...', flush=True)
+            print('Waiting for the tablet (USB cable, or Wireless debugging on the same Wi-Fi)...', flush=True)
             said = True
         if wait is not None and time.time() - t0 > wait: raise RuntimeError('Tablet not reachable over USB or Wi-Fi.')
         time.sleep(3)
 
 
+def open_app(package):
+    """Bring the game to the front (launching it if needed)."""
+    _adb('-s', os.environ.get('ANDROID_SERIAL', ''), 'shell', 'monkey', '-p', package,
+         '-c', 'android.intent.category.LAUNCHER', '1', timeout=20)
+
+
 if __name__ == '__main__':
-    if sys.argv[1:] == ['setup']: setup()
+    if sys.argv[1:] == ['pair']: pair()
     else: print('Would use:', ensure(wait=10))

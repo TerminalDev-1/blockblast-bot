@@ -379,6 +379,10 @@ def main():
 def pick_device():
     global SLOW
     SLOW=3 if adbwifi.is_wireless(adbwifi.ensure()) else 1
+    if '--play' in sys.argv:
+        focus=adb('shell','dumpsys','window').decode('utf-8','replace')
+        if 'com.block.juggle/' not in next((l for l in focus.splitlines() if 'mCurrentFocus=' in l),''):
+            print('Opening Block Blast.',flush=True); adbwifi.open_app('com.block.juggle'); time.sleep(6)
 
 if __name__=='__main__':
     while True:
