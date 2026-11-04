@@ -1,6 +1,7 @@
-import argparse, subprocess, time, sys, re, xml.etree.ElementTree as ET
+import argparse, gzip, struct, subprocess, time, sys, re, xml.etree.ElementTree as ET
 from functools import lru_cache
 import cv2
+import planner
 import numpy as np
 W,H=2880,1800
 GX,GY,STEP=994,321,112
@@ -16,17 +17,36 @@ def adb(*args):
     return subprocess.run(['adb',*map(str,args)],check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=20).stdout
 
 def capture():
+    # Raw pixels compressed on the tablet are ~2.5x faster than PNG; PNG is the fallback.
+    try:
+        data=gzip.decompress(adb('exec-out','screencap | gzip -1'))
+        w,h=struct.unpack('<II',data[:8]); header=len(data)-w*h*4
+        if (w,h)==(W,H) and 12<=header<=32:
+            return np.frombuffer(data,np.uint8,offset=header).reshape(H,W,4)[:,:,2::-1].copy()
+    except (OSError,EOFError,ValueError,struct.error): pass
     im=cv2.imdecode(np.frombuffer(adb('exec-out','screencap','-p'),np.uint8),cv2.IMREAD_COLOR)
     if im is None or im.shape[:2]!=(H,W): raise RuntimeError('Expected a 2880x1800 landscape screenshot.')
     return im
 
+def cell_stats(im):
+    """Per-cell (texture, mean colour). Blocks are bevelled (textured); empty cells are flat.
+    This works for every colour theme the game switches between."""
+    stats=[]
+    for y in range(8):
+        for x in range(8):
+            x0=GX+x*STEP+8; y0=GY+y*STEP+8
+            p=im[y0:y0+STEP-16,x0:x0+STEP-16].astype(np.float32)
+            stats.append((float(p.mean(2).std()),p.reshape(-1,3).mean(0)))
+    return stats
+
 def is_board(im):
-    differences=[]
-    for y in (380,600,820,1100):
-        inside=np.median(im[y-15:y+15,1000:1030].reshape(-1,3),axis=0)
-        outside=np.median(im[y-15:y+15,920:950].reshape(-1,3),axis=0)
-        differences.append(np.linalg.norm(inside-outside))
-    return sum(d>35 for d in differences)>=3
+    stats=cell_stats(im)
+    # Line-clear sparkles and combo text briefly obscure a few cells; menus obscure many.
+    if sum(7<=sd<=12 or sd>36 for sd,_ in stats)>8: return False
+    flat=[c for sd,c in stats if sd<7]
+    if len(flat)<4: return False
+    centre=np.median(flat,axis=0)
+    return max(np.linalg.norm(c-centre) for c in flat)<25
 
 def green_button(im):
     hsv=cv2.cvtColor(im[1270:1460,1140:1740],cv2.COLOR_BGR2HSV)
@@ -75,13 +95,7 @@ def recover_screen(im,unknown_count):
     print('Unknown screen: waiting to preserve the current game.',flush=True); time.sleep(10)
 
 def read_board(im):
-    values=[]
-    for y in range(8):
-        for x in range(8):
-            cx=int(GX+(x+.5)*STEP); cy=int(GY+(y+.5)*STEP)
-            values.append(float(np.mean(np.max(im[cy-10:cy+10,cx-10:cx+10],axis=2))))
-    threshold=min(values)+30
-    return sum((1<<i) for i,v in enumerate(values) if v>threshold)
+    return sum(1<<i for i,(sd,_) in enumerate(cell_stats(im)) if sd>10)
 
 def read_pieces(im):
     pieces=[]
@@ -167,38 +181,88 @@ def choose(board,pieces,avoid=frozenset()):
     if not states or not states[0][2]: return None
     return max(states,key=lambda s:(len(s[2]),s[0]+quality(s[1])))[2][0]
 
-def drag_piece(sx, sy, dx, dy):
-    # A single continuous swipe produces smooth Android touch events.
-    adb('shell','input','swipe',round(sx),round(sy),round(dx),round(dy),600)
+def drag_piece(sx, sy, dx, dy, ms):
+    # A single continuous swipe; the game moves the held piece GAIN x the finger.
+    adb('shell','input','swipe',round(sx),round(sy),round(dx),round(dy),ms)
+
+def log(*parts):
+    print(time.strftime('%H:%M:%S'),*parts,flush=True)
 
 def show(board,pieces):
     for y in range(8): print(''.join('#' if board>>(y*8+x)&1 else '.' for x in range(8)))
     for p in pieces: print('tray',p['slot']+1,'cells',p['cells'])
 
-def main():
-    ap=argparse.ArgumentParser(); ap.add_argument('--play',action='store_true'); ap.add_argument('--max-moves',type=int,default=1000); ap.add_argument('--pickup-y',type=int,default=PICKUP_Y); args=ap.parse_args()
-    corrections={}; turn=0; unknown_count=0; failed_board=None; failed_moves=set()
-    while turn<args.max_moves:
+def settle(before, expected, timeout=3.0):
+    """Capture until the board shows the move's result. Returns (image, board) or (image, None) off-board."""
+    end=time.time()+timeout; last=None; im=None
+    while True:
         im=capture()
         if not is_board(im):
+            # Usually a transient effect; only report off-board if it persists.
+            if time.time()>end: return im,None
+            last=None; time.sleep(.2); continue
+        b=read_board(im)
+        if b==expected: return im,b
+        # A changed board read twice in a row is final (clear animations differ from both).
+        if b!=before and b==last: return im,b
+        if time.time()>end: return im,b
+        last=b
+
+def save_unknown(im):
+    import os
+    os.makedirs('unknown-screens',exist_ok=True)
+    files=sorted(os.listdir('unknown-screens'))
+    if len(files)<30: cv2.imwrite(os.path.join('unknown-screens',time.strftime('%Y%m%d-%H%M%S')+'.png'),im)
+
+def main():
+    ap=argparse.ArgumentParser()
+    ap.add_argument('--play',action='store_true'); ap.add_argument('--max-moves',type=int,default=1000)
+    ap.add_argument('--pickup-y',type=int,default=PICKUP_Y); ap.add_argument('--swipe-ms',type=int,default=300)
+    args=ap.parse_args()
+    corrections={}; turn=0; unknown_count=0; failed_board=None; failed_moves=set()
+    plan_seq=[]; im=None; started=time.time()
+    while turn<args.max_moves:
+        if im is None: im=capture()
+        if not is_board(im):
             if not args.play: print('Not on the game board.'); return
-            unknown_count+=1; recover_screen(im,unknown_count); continue
+            unknown_count+=1; plan_seq=[]; im=None
+            # Never tap anything until the screen has been unrecognised for a few reads.
+            if unknown_count<5: time.sleep(.4); continue
+            if unknown_count==5: save_unknown(capture())
+            recover_screen(capture(),unknown_count); continue
         unknown_count=0; board=read_board(im)
         try: pieces=read_pieces(im)
-        except RuntimeError as e: print(str(e),'Waiting for screen to settle.',flush=True); time.sleep(4); continue
-        if board!=failed_board:
-            failed_board=board; failed_moves.clear()
-        turn+=1; print(f'\nMove {turn}',flush=True); show(board,pieces)
-        if not pieces: print('Waiting for pieces or game-over screen.',flush=True); time.sleep(5); continue
-        move=choose(board,pieces,failed_moves)
-        if not move:
+        except RuntimeError as e:
+            log(str(e),'Waiting for screen to settle.'); time.sleep(.5); im=None; continue
+        if board!=failed_board: failed_board=board; failed_moves.clear()
+        if not pieces: log('Waiting for pieces or game-over screen.'); time.sleep(1); im=None; plan_seq=[]; continue
+        by_slot={p['slot']:p for p in pieces}
+        # Keep following the tray's plan while the board matches it; otherwise re-plan.
+        following=(plan_seq and plan_seq[0][0] in by_slot and plan_seq[0][4]==board
+                   and plan_seq[0][5]==tuple(by_slot[plan_seq[0][0]]['cells']))
+        if not following:
+            # New tray pieces animate in and can be misread mid-animation;
+            # plan only from two consecutive screenshots that agree.
+            time.sleep(.15); im2=capture()
+            try: same=(is_board(im2) and read_board(im2)==board and
+                       [(p['slot'],p['cells']) for p in read_pieces(im2)]==[(p['slot'],p['cells']) for p in pieces])
+            except RuntimeError: same=False
+            if not same: im=im2; continue
+            pieces=read_pieces(im2); by_slot={p['slot']:p for p in pieces}
+            t=time.time()
+            seq=planner.plan(board,[(p['slot'],p['cells']) for p in pieces],failed_moves,seed=turn)
+            plan_seq=[]; prev=board
+            for slot,x,y,nb in seq: plan_seq.append((slot,x,y,nb,prev,tuple(by_slot[slot]['cells']))); prev=nb
+            log(f'Planned {len(seq)} of {len(pieces)} pieces in {time.time()-t:.2f}s')
+        turn+=1; print(f'\nMove {turn}  ({turn/max(1e-9,time.time()-started)*60:.0f} moves/min)',flush=True); show(board,pieces)
+        if not plan_seq:
             if failed_moves:
-                print('No remaining untried placements; pausing before another scan.',flush=True); time.sleep(15)
+                log('No untried placements left; re-reading the screen.'); failed_moves.clear(); time.sleep(1)
             else:
-                print('No legal moves; waiting for game-over screen.',flush=True); time.sleep(5)
-            continue
-        p,x,y,expected=move
-        print(f"Selected tray {p['slot']+1}, grid column {x+1}, row {y+1}",flush=True)
+                log('No legal moves; waiting for game-over screen.'); time.sleep(2)
+            im=None; continue
+        slot,x,y,expected,_,_=plan_seq.pop(0); p=by_slot[slot]
+        log(f"Selected tray {slot+1}, grid column {x+1}, row {y+1}")
         if not args.play: return
         cx,cy=p['cells'][0]; ox,oy=p['origin']; sx=ox+cx*50+25; sy=oy+cy*50+25
         width=max(a for a,b in p['cells'])+1; height=max(b for a,b in p['cells'])+1
@@ -214,24 +278,26 @@ def main():
             if x+width==8 and retry_x>0: continue
             if y==0 and retry_y<0: continue
             if y+height==8 and retry_y>0: continue
-            drag_piece(sx,sy,dx+retry_x,dy+retry_y); time.sleep(2.5)
-            after=capture()
-            if not is_board(after): print('Screen changed; checking state.',flush=True); actual=None; break
-            actual=read_board(after)
+            drag_piece(sx,sy,dx+retry_x,dy+retry_y,args.swipe_ms)
+            im,actual=settle(board,expected)
+            if actual is None: log('Screen changed; checking state.'); break
             if actual!=board: break
-            print('Retrying unplaced piece.',flush=True)
-        if actual is None: continue
+            log('Retrying unplaced piece.')
+        if actual is None: im=None; plan_seq=[]; continue
         if actual==board:
-            failed_moves.add((p['slot'],x,y))
-            print('Placement failed; trying a different move.',flush=True)
-            continue
+            failed_moves.add((slot,x,y)); plan_seq=[]
+            log('Placement failed; trying a different move.'); continue
         if actual!=expected:
+            plan_seq=[]
             matches=[(xx,yy) for yy in range(8) for xx in range(8) if (result:=place(board,p['cells'],xx,yy)) is not None and result[0]==actual]
             if len(matches)==1:
-                ax,ay=matches[0]; corrections[key]=(adjust_x+retry_x+(x-ax)*STEP/GAIN,adjust_y+retry_y+(y-ay)*STEP/GAIN)
-                print(f'Piece landed at ({ax+1}, {ay+1}); recalibrated.',flush=True)
-            else: print('Could not verify placement; re-reading.',flush=True); time.sleep(4); continue
-        time.sleep(.8)
+                ax,ay=matches[0]
+                cx_=max(-1.5*RETRY,min(1.5*RETRY,adjust_x+retry_x+(x-ax)*STEP/GAIN))
+                cy_=max(-1.5*RETRY,min(1.5*RETRY,adjust_y+retry_y+(y-ay)*STEP/GAIN))
+                corrections[key]=(cx_,cy_)
+                log(f'Piece landed at ({ax+1}, {ay+1}); recalibrated.')
+            else:
+                log('Could not verify placement; re-reading.'); time.sleep(.5); im=None
 
 if __name__=='__main__':
     while True:

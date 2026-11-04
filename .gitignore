@@ -1,0 +1,12 @@
+__pycache__/
+screen.png
+drag.png
+
+bot.pid
+bot.log
+bot-error.log
+
+ad.png
+menu.png
+latest.png
+unknown-screens/
