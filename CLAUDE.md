@@ -15,7 +15,7 @@ Plays Block Blast (Classic) on a USB-connected Android tablet (2880x1800 landsca
 - Tray pieces: background and noise are sampled from the strip just above the tray (y 1290–1325); the threshold adapts (pink-on-pink pieces differ by only ~34), and other thresholds are tried, accepting only shapes that fit the 50 px tray grid. A slot unreadable 20 times in a row saves the screen to `unknown-screens/`.
 - If "no legal moves" lasts 30 s without a result screen, the screen is misread: it is saved and normal recovery runs. Any exception is logged and the loop restarts after `adb wait-for-device`.
 - New tray pieces animate in; the bot only plans from two consecutive screenshots that agree.
-- Fast capture: `screencap | gzip -1` raw (≈0.35 s) with PNG fallback (≈0.75 s).
+- Fast capture: `screencap | gzip -1` raw (≈0.35 s) with PNG fallback (≈0.75 s). screencap occasionally hangs on the tablet; each attempt has a 4–6 s timeout (the process is killed) and is retried, so a hang costs seconds, not the old 27 s freeze.
 
 ## Working on it
 - The game is often live: don't stop a running bot unless the user says so. Code changes only take effect after a restart.

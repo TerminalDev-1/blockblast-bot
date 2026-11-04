@@ -14,20 +14,29 @@ PICKUP_Y=1232
 FULL=(1<<64)-1
 RETRY=round(STEP/GAIN)  # finger distance that moves a piece by one cell
 
-def adb(*args):
-    return subprocess.run(['adb',*map(str,args)],check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=20).stdout
+def adb(*args,timeout=20):
+    return subprocess.run(['adb',*map(str,args)],check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=timeout).stdout
 
-def capture():
-    # Raw pixels compressed on the tablet are ~2.5x faster than PNG; PNG is the fallback.
-    try:
-        data=gzip.decompress(adb('exec-out','screencap | gzip -1'))
-        w,h=struct.unpack('<II',data[:8]); header=len(data)-w*h*4
-        if (w,h)==(W,H) and 12<=header<=32:
-            return np.frombuffer(data,np.uint8,offset=header).reshape(H,W,4)[:,:,2::-1].copy()
-    except (OSError,EOFError,ValueError,struct.error): pass
-    im=cv2.imdecode(np.frombuffer(adb('exec-out','screencap','-p'),np.uint8),cv2.IMREAD_COLOR)
+def _capture_fast():
+    # Raw pixels compressed on the tablet are ~2.5x faster than PNG.
+    data=gzip.decompress(adb('exec-out','screencap | gzip -1',timeout=4))
+    w,h=struct.unpack('<II',data[:8]); header=len(data)-w*h*4
+    if (w,h)!=(W,H) or not 12<=header<=32: raise ValueError('unexpected raw screenshot')
+    return np.frombuffer(data,np.uint8,offset=header).reshape(H,W,4)[:,:,2::-1].copy()
+
+def _capture_png():
+    im=cv2.imdecode(np.frombuffer(adb('exec-out','screencap','-p',timeout=6),np.uint8),cv2.IMREAD_COLOR)
     if im is None or im.shape[:2]!=(H,W): raise RuntimeError('Expected a 2880x1800 landscape screenshot.')
     return im
+
+def capture():
+    """Screenshot that never stalls for long: screencap occasionally hangs on the
+    tablet, so each attempt is time-limited (the hung process is killed) and retried."""
+    for attempt,grab in enumerate((_capture_fast,_capture_fast,_capture_png,_capture_fast,_capture_png)):
+        try: return grab()
+        except (subprocess.TimeoutExpired,subprocess.CalledProcessError,OSError,EOFError,ValueError,struct.error) as e:
+            print(time.strftime('%H:%M:%S'),f'Screenshot attempt {attempt+1} failed ({type(e).__name__}); retrying.',flush=True)
+    raise RuntimeError('Screenshots keep failing.')
 
 def cell_stats(im):
     """Per-cell (lip, Lab colour, centre texture).
@@ -237,7 +246,7 @@ def choose(board,pieces,avoid=frozenset()):
 
 def drag_piece(sx, sy, dx, dy, ms):
     # A single continuous swipe; the game moves the held piece GAIN x the finger.
-    adb('shell','input','swipe',round(sx),round(sy),round(dx),round(dy),ms)
+    adb('shell','input','swipe',round(sx),round(sy),round(dx),round(dy),ms,timeout=ms/1000+8)
 
 def log(*parts):
     print(time.strftime('%H:%M:%S'),*parts,flush=True)
