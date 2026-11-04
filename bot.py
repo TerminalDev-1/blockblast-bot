@@ -2,6 +2,7 @@ import argparse, gzip, struct, subprocess, time, sys, re, xml.etree.ElementTree 
 from functools import lru_cache
 import cv2
 import planner
+import adbwifi
 import numpy as np
 W,H=2880,1800
 GX,GY,STEP=994,321,112
@@ -14,18 +15,20 @@ PICKUP_Y=1232
 FULL=(1<<64)-1
 RETRY=round(STEP/GAIN)  # finger distance that moves a piece by one cell
 
+SLOW=1  # screenshot timeouts are stretched over Wi-Fi (set in __main__)
+
 def adb(*args,timeout=20):
     return subprocess.run(['adb',*map(str,args)],check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=timeout).stdout
 
 def _capture_fast():
     # Raw pixels compressed on the tablet are ~2.5x faster than PNG.
-    data=gzip.decompress(adb('exec-out','screencap | gzip -1',timeout=4))
+    data=gzip.decompress(adb('exec-out','screencap | gzip -1',timeout=4*SLOW))
     w,h=struct.unpack('<II',data[:8]); header=len(data)-w*h*4
     if (w,h)!=(W,H) or not 12<=header<=32: raise ValueError('unexpected raw screenshot')
     return np.frombuffer(data,np.uint8,offset=header).reshape(H,W,4)[:,:,2::-1].copy()
 
 def _capture_png():
-    im=cv2.imdecode(np.frombuffer(adb('exec-out','screencap','-p',timeout=6),np.uint8),cv2.IMREAD_COLOR)
+    im=cv2.imdecode(np.frombuffer(adb('exec-out','screencap','-p',timeout=6*SLOW),np.uint8),cv2.IMREAD_COLOR)
     if im is None or im.shape[:2]!=(H,W): raise RuntimeError('Expected a 2880x1800 landscape screenshot.')
     return im
 
@@ -373,9 +376,14 @@ def main():
             else:
                 log('Could not verify placement; re-reading.'); time.sleep(.5); im=None
 
+def pick_device():
+    global SLOW
+    SLOW=3 if adbwifi.is_wireless(adbwifi.ensure()) else 1
+
 if __name__=='__main__':
     while True:
         try:
+            pick_device()
             main()
             break
         except KeyboardInterrupt:
@@ -388,7 +396,7 @@ if __name__=='__main__':
             if '--play' not in sys.argv:
                 sys.exit(1)
             time.sleep(5)
-            try: subprocess.run(['adb','wait-for-device'],timeout=120)
+            try: pick_device()  # USB or Wi-Fi, reconnecting if needed
             except Exception: pass
 
 
