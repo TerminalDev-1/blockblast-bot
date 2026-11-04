@@ -1,0 +1,252 @@
+import argparse, subprocess, time, sys, re, xml.etree.ElementTree as ET
+from functools import lru_cache
+import cv2
+import numpy as np
+W,H=2880,1800
+GX,GY,STEP=994,321,112
+TRAYS=[(990,1290),(1290,1590),(1590,1890)]
+# Measured from screen recordings: a held piece moves about 1.47 px for every
+# 1 px of finger movement on both axes, and when lifted from the tray its centre
+# jumps to this fixed height (independent of the piece or touch point).
+GAIN=1.47
+PICKUP_Y=1232
+RETRY=round(STEP/GAIN)  # finger distance that moves a piece by one cell
+
+def adb(*args):
+    return subprocess.run(['adb',*map(str,args)],check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=20).stdout
+
+def capture():
+    im=cv2.imdecode(np.frombuffer(adb('exec-out','screencap','-p'),np.uint8),cv2.IMREAD_COLOR)
+    if im is None or im.shape[:2]!=(H,W): raise RuntimeError('Expected a 2880x1800 landscape screenshot.')
+    return im
+
+def is_board(im):
+    differences=[]
+    for y in (380,600,820,1100):
+        inside=np.median(im[y-15:y+15,1000:1030].reshape(-1,3),axis=0)
+        outside=np.median(im[y-15:y+15,920:950].reshape(-1,3),axis=0)
+        differences.append(np.linalg.norm(inside-outside))
+    return sum(d>35 for d in differences)>=3
+
+def green_button(im):
+    hsv=cv2.cvtColor(im[1270:1460,1140:1740],cv2.COLOR_BGR2HSV)
+    return np.mean((hsv[:,:,0]>35)&(hsv[:,:,0]<90)&(hsv[:,:,1]>100)&(hsv[:,:,2]>110))>.30
+
+def play_button(im):
+    # The results screen uses a white triangular play icon, including on its rainbow button.
+    hsv=cv2.cvtColor(im[1260:1460,1250:1630],cv2.COLOR_BGR2HSV)
+    mask=((hsv[:,:,2]>200)&(hsv[:,:,1]<60)).astype(np.uint8)
+    _,_,stats,_=cv2.connectedComponentsWithStats(mask,8)
+    return any(65<=w<=110 and 75<=h<=110 and 3000<=area<=7000
+               for x,y,w,h,area in stats[1:])
+
+def rating_popup(im):
+    a=im[490:505,1080:1200].mean((0,1)); b=im[510:550,1750:1800].mean((0,1))
+    return a[0]>150 and a[0]>a[2]*1.15 and b.mean()>110 and not is_board(im)
+
+def close_accessible_ad():
+    try:
+        adb('shell','uiautomator','dump','/sdcard/bot-window.xml')
+        xml=adb('shell','cat','/sdcard/bot-window.xml').decode('utf-8','replace')
+        root=ET.fromstring(xml[xml.find('<?xml'):])
+        for node in root.iter('node'):
+            label=(node.get('text','')+' '+node.get('content-desc','')).strip().lower()
+            if label not in ('close','dismiss','skip','close ad','dismiss ad','close interstitial','skip ad','x'): continue
+            bounds=re.fullmatch(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]',node.get('bounds',''))
+            if not bounds: continue
+            x1,y1,x2,y2=map(int,bounds.groups())
+            if x2>x1 and y2>y1 and y1<1620:
+                print('Closing ad:',label,flush=True); adb('shell','input','tap',(x1+x2)//2,(y1+y2)//2); return True
+    except (ValueError,ET.ParseError,subprocess.CalledProcessError): pass
+    return False
+
+def recover_screen(im,unknown_count):
+    focus=adb('shell','dumpsys','window').decode('utf-8','replace')
+    current=next((line for line in focus.splitlines() if 'mCurrentFocus=' in line),'')
+    if current and 'com.block.juggle/' not in current:
+        print('Returning from another app or ad.',flush=True); adb('shell','input','keyevent','BACK'); time.sleep(2); return
+    if play_button(im):
+        print('Result screen: starting next attempt against the current best.',flush=True); adb('shell','input','tap',1440,1335); time.sleep(5); return
+    if green_button(im):
+        print('Starting or restarting Classic.',flush=True); adb('shell','input','tap',1440,1370); time.sleep(4); return
+    if rating_popup(im):
+        print('Closing rating prompt.',flush=True); adb('shell','input','tap',1778,525); time.sleep(2); return
+    if close_accessible_ad(): time.sleep(3); return
+    print('Unknown screen: waiting to preserve the current game.',flush=True); time.sleep(10)
+
+def read_board(im):
+    values=[]
+    for y in range(8):
+        for x in range(8):
+            cx=int(GX+(x+.5)*STEP); cy=int(GY+(y+.5)*STEP)
+            values.append(float(np.mean(np.max(im[cy-10:cy+10,cx-10:cx+10],axis=2))))
+    threshold=min(values)+30
+    return sum((1<<i) for i,v in enumerate(values) if v>threshold)
+
+def read_pieces(im):
+    pieces=[]
+    for slot,(left,right) in enumerate(TRAYS):
+        crop=im[1320:1610,left:right]
+        background=np.median(crop[:40,:].reshape(-1,3),axis=0)
+        mask=(np.linalg.norm(crop.astype(np.float32)-background,axis=2)>45).astype(np.uint8)
+        n,labels,stats,centroids=cv2.connectedComponentsWithStats(mask,8)
+        components=[(x,y,w,h,area) for x,y,w,h,area in stats[1:] if area>300 and w>=20 and h>=20]
+        if not components: continue
+        x0=min(a[0] for a in components); y0=min(a[1] for a in components)
+        x1=max(a[0]+a[2] for a in components); y1=max(a[1]+a[3] for a in components)
+        if x1-x0>275 or y1-y0>275: raise RuntimeError(f'Unrecognized tray {slot+1}.')
+        cells=[]
+        for y in range(round((y1-y0)/50)):
+            for x in range(round((x1-x0)/50)):
+                xx=x0+x*50+20; yy=y0+y*50+20
+                patch=mask[y0+y*50+5:y0+y*50+45,x0+x*50+5:x0+x*50+45]
+                if patch.size and np.mean(patch)>.40: cells.append((x,y))
+        if not cells or len(cells)>9: raise RuntimeError(f'Unrecognized piece in tray {slot+1}.')
+        pieces.append({'slot':slot,'cells':cells,'origin':(left+x0,1320+y0)})
+    return pieces
+
+def place(board,cells,ox,oy):
+    mask=0
+    for x,y in cells:
+        x+=ox; y+=oy
+        if x>=8 or y>=8: return None
+        mask|=1<<(y*8+x)
+    if mask&board: return None
+    result=board|mask; lines=[]
+    for y in range(8):
+        m=255<<(8*y)
+        if result&m==m: lines.append(m)
+    for x in range(8):
+        m=sum(1<<(y*8+x) for y in range(8))
+        if result&m==m: lines.append(m)
+    for m in lines: result &= ~m
+    return result,len(lines)
+
+SQUARES3=[sum(1<<((y+dy)*8+x+dx) for dy in range(3) for dx in range(3)) for y in range(6) for x in range(6)]
+LINES5=[sum(1<<(y*8+x+i) for i in range(5)) for y in range(8) for x in range(4)] + [sum(1<<((y+i)*8+x) for i in range(5)) for y in range(4) for x in range(8)]
+
+@lru_cache(maxsize=300000)
+def quality(board):
+    filled=board.bit_count(); isolated=0; adjacent=0
+    for y in range(8):
+        for x in range(8):
+            if board>>(y*8+x)&1: continue
+            neighbors=[(a,b) for a,b in [(x-1,y),(x+1,y),(x,y-1),(x,y+1)] if 0<=a<8 and 0<=b<8]
+            occupied=sum(bool(board>>(b*8+a)&1) for a,b in neighbors)
+            isolated+=occupied==len(neighbors); adjacent+=occupied
+    square_room=sum(not (board&m) for m in SQUARES3)
+    line_room=sum(not (board&m) for m in LINES5)
+    return -filled*1.5-isolated*14-adjacent*.08+min(square_room,8)*.65+min(line_room,12)*.18
+
+def choose(board,pieces,avoid=frozenset()):
+    states=[(0,board,[],pieces)]
+    for depth in range(len(pieces)):
+        new=[]
+        for score,b,moves,remaining in states:
+            for i,p in enumerate(remaining):
+                for y in range(8):
+                    for x in range(8):
+                        if not moves and (p['slot'],x,y) in avoid: continue
+                        outcome=place(b,p['cells'],x,y)
+                        if outcome is not None:
+                            nb,lines=outcome
+                            new.append((score+lines*25,nb,moves+[(p,x,y,nb)],remaining[:i]+remaining[i+1:]))
+        if not new: break
+        new.sort(key=lambda s:s[0]+quality(s[1]),reverse=True)
+        # Preserve distinct board states and several alternative first moves.
+        states=[]; seen=set(); per_first={}
+        for candidate in new:
+            score,nb,moves,left=candidate
+            state_key=(nb,tuple(p['slot'] for p in left))
+            first=moves[0]
+            first_key=(first[0]['slot'],first[1],first[2])
+            if state_key in seen or per_first.get(first_key,0)>=12: continue
+            seen.add(state_key); per_first[first_key]=per_first.get(first_key,0)+1
+            states.append(candidate)
+            if len(states)>=180: break
+    if not states or not states[0][2]: return None
+    return max(states,key=lambda s:(len(s[2]),s[0]+quality(s[1])))[2][0]
+
+def drag_piece(sx, sy, dx, dy):
+    # A single continuous swipe produces smooth Android touch events.
+    adb('shell','input','swipe',round(sx),round(sy),round(dx),round(dy),600)
+
+def show(board,pieces):
+    for y in range(8): print(''.join('#' if board>>(y*8+x)&1 else '.' for x in range(8)))
+    for p in pieces: print('tray',p['slot']+1,'cells',p['cells'])
+
+def main():
+    ap=argparse.ArgumentParser(); ap.add_argument('--play',action='store_true'); ap.add_argument('--max-moves',type=int,default=1000); ap.add_argument('--pickup-y',type=int,default=PICKUP_Y); args=ap.parse_args()
+    corrections={}; turn=0; unknown_count=0; failed_board=None; failed_moves=set()
+    while turn<args.max_moves:
+        im=capture()
+        if not is_board(im):
+            if not args.play: print('Not on the game board.'); return
+            unknown_count+=1; recover_screen(im,unknown_count); continue
+        unknown_count=0; board=read_board(im)
+        try: pieces=read_pieces(im)
+        except RuntimeError as e: print(str(e),'Waiting for screen to settle.',flush=True); time.sleep(4); continue
+        if board!=failed_board:
+            failed_board=board; failed_moves.clear()
+        turn+=1; print(f'\nMove {turn}',flush=True); show(board,pieces)
+        if not pieces: print('Waiting for pieces or game-over screen.',flush=True); time.sleep(5); continue
+        move=choose(board,pieces,failed_moves)
+        if not move:
+            if failed_moves:
+                print('No remaining untried placements; pausing before another scan.',flush=True); time.sleep(15)
+            else:
+                print('No legal moves; waiting for game-over screen.',flush=True); time.sleep(5)
+            continue
+        p,x,y,expected=move
+        print(f"Selected tray {p['slot']+1}, grid column {x+1}, row {y+1}",flush=True)
+        if not args.play: return
+        cx,cy=p['cells'][0]; ox,oy=p['origin']; sx=ox+cx*50+25; sy=oy+cy*50+25
+        width=max(a for a,b in p['cells'])+1; height=max(b for a,b in p['cells'])+1
+        target_x=GX+(x+width/2)*STEP; tray_center_x=ox+width*25; key=tuple(p['cells'])
+        adjust_x,adjust_y=corrections.get(key,(0,0))
+        target_y=GY+(y+height/2)*STEP
+        dx=sx+(target_x-tray_center_x)/GAIN+adjust_x
+        dy=sy+(target_y-args.pickup_y)/GAIN+adjust_y
+        actual=board
+        for retry_x,retry_y in [(0,0),(0,RETRY),(0,-RETRY),(RETRY,0),(-RETRY,0)]:
+            # Each retry shifts the piece by one cell; never shift it off the board.
+            if x==0 and retry_x<0: continue
+            if x+width==8 and retry_x>0: continue
+            if y==0 and retry_y<0: continue
+            if y+height==8 and retry_y>0: continue
+            drag_piece(sx,sy,dx+retry_x,dy+retry_y); time.sleep(2.5)
+            after=capture()
+            if not is_board(after): print('Screen changed; checking state.',flush=True); actual=None; break
+            actual=read_board(after)
+            if actual!=board: break
+            print('Retrying unplaced piece.',flush=True)
+        if actual is None: continue
+        if actual==board:
+            failed_moves.add((p['slot'],x,y))
+            print('Placement failed; trying a different move.',flush=True)
+            continue
+        if actual!=expected:
+            matches=[(xx,yy) for yy in range(8) for xx in range(8) if (result:=place(board,p['cells'],xx,yy)) is not None and result[0]==actual]
+            if len(matches)==1:
+                ax,ay=matches[0]; corrections[key]=(adjust_x+retry_x+(x-ax)*STEP/GAIN,adjust_y+retry_y+(y-ay)*STEP/GAIN)
+                print(f'Piece landed at ({ax+1}, {ay+1}); recalibrated.',flush=True)
+            else: print('Could not verify placement; re-reading.',flush=True); time.sleep(4); continue
+        time.sleep(.8)
+
+if __name__=='__main__':
+    while True:
+        try:
+            main()
+            break
+        except KeyboardInterrupt:
+            print('\nStopped.', flush=True)
+            break
+        except (RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            print(f'ADB or screen error: {e}. Retrying by rereading the screen in 5 seconds.', file=sys.stderr, flush=True)
+            if '--play' not in sys.argv:
+                sys.exit(1)
+            time.sleep(5)
+
+
+
+
