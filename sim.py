@@ -1,10 +1,12 @@
 """Offline benchmark: play simulated games with the planner (no tablet needed).
 
-Usage: python sim.py [games] [max_moves] [--old]
+Usage: python sim.py [games] [max_moves] [--light] [--old]
 --old benchmarks the original planner in bot.py for comparison.
 """
 import random, sys, time
 import planner
+
+PLAN_ARGS = {}  # --light uses the older, lighter look-ahead
 
 
 def deal(rng):
@@ -26,7 +28,7 @@ def play(seed, max_moves, use_old):
                 lines += ((board | mask).bit_count() - nb.bit_count()) // 8 and planner.drop(board, mask)[1]
                 board = nb; tray = [t for t in tray if t[0] != slot]; moves += 1
             else:
-                seq = planner.plan(board, tray, seed=seed + moves)
+                seq = planner.plan(board, tray, seed=seed + moves, **PLAN_ARGS)
                 if not seq: return moves, lines
                 for slot, x, y, nb in seq:
                     cells = dict(tray)[slot]
@@ -40,6 +42,7 @@ def play(seed, max_moves, use_old):
 if __name__ == '__main__':
     args = [a for a in sys.argv[1:] if not a.startswith('--')]
     games = int(args[0]) if args else 10; cap = int(args[1]) if len(args) > 1 else 300
+    if '--light' in sys.argv: PLAN_ARGS.update(lookahead=10, min_filled=20, candidates=6)
     old = '--old' in sys.argv; t = time.time(); results = []
     for g in range(games):
         r = play(1000 + g, cap, old); results.append(r)

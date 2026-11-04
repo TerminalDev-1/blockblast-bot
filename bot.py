@@ -11,6 +11,7 @@ TRAYS=[(990,1290),(1290,1590),(1590,1890)]
 # jumps to this fixed height (independent of the piece or touch point).
 GAIN=1.47
 PICKUP_Y=1232
+FULL=(1<<64)-1
 RETRY=round(STEP/GAIN)  # finger distance that moves a piece by one cell
 
 def adb(*args):
@@ -29,24 +30,61 @@ def capture():
     return im
 
 def cell_stats(im):
-    """Per-cell (texture, mean colour). Blocks are bevelled (textured); empty cells are flat.
-    This works for every colour theme the game switches between."""
+    """Per-cell (lip, Lab colour, centre texture).
+    lip: blocks in many themes are raised with a thick darker bottom edge; empty cells
+    are flat or sunken. The row profile is smoothed over 6 px to ignore grid lines."""
+    g=cv2.cvtColor(im,cv2.COLOR_BGR2GRAY).astype(np.float32); kernel=np.ones(6,np.float32)/6
+    lab=cv2.cvtColor(im[GY:GY+8*STEP,GX:GX+8*STEP],cv2.COLOR_BGR2LAB).astype(np.float32)
     stats=[]
     for y in range(8):
         for x in range(8):
-            x0=GX+x*STEP+8; y0=GY+y*STEP+8
-            p=im[y0:y0+STEP-16,x0:x0+STEP-16].astype(np.float32)
-            stats.append((float(p.mean(2).std()),p.reshape(-1,3).mean(0)))
+            x0=GX+x*STEP; y0=GY+y*STEP
+            rows=g[y0:y0+STEP,x0+30:x0+82].mean(1)
+            smooth=np.convolve(rows,kernel,'valid')
+            lip=float(rows[30:70].mean()-smooth[76:STEP-6].min())
+            centre=lab[y*STEP+30:y*STEP+82,x*STEP+30:x*STEP+82]
+            stats.append((lip,centre.reshape(-1,3).mean(0),float(centre[:,:,0].std())))
     return stats
+
+def colour_groups(colours,radius=20):
+    """Greedy clusters of cells with near-identical colour, largest first."""
+    d=np.linalg.norm(colours[:,None]-colours[None],axis=2); left=set(range(len(colours))); groups=[]
+    while left:
+        seed=max(left,key=lambda k:sum(d[k,j]<radius for j in left))
+        g=[j for j in left if d[seed,j]<radius]; left-=set(g); groups.append(g)
+    return sorted(groups,key=len,reverse=True)
 
 def is_board(im):
     stats=cell_stats(im)
-    # Line-clear sparkles and combo text briefly obscure a few cells; menus obscure many.
-    if sum(7<=sd<=12 or sd>36 for sd,_ in stats)>8: return False
-    flat=[c for sd,c in stats if sd<7]
-    if len(flat)<4: return False
-    centre=np.median(flat,axis=0)
-    return max(np.linalg.norm(c-centre) for c in flat)<25
+    # Board cells have flat centres (blocks and empty alike); menus and pop-ups don't.
+    # A few textured cells are allowed for line-clear sparkles and combo text.
+    if sum(t>12 for _,_,t in stats)>8: return False
+    return len(colour_groups(np.array([c for _,c,_ in stats]))[0])>=4
+
+EMPTY_COLOUR=None  # Lab colour of an empty cell in the current theme
+
+def read_board(im,hint_empty=0):
+    """Empty cells all share one colour; everything else is a block.
+    The colour is learned rather than hard-coded because the theme changes during a run
+    (dark, pink, mint, white, wood, ice...). hint_empty marks cells known to be empty
+    (e.g. from the previous move), which re-learns the colour after a theme change."""
+    global EMPTY_COLOUR
+    stats=cell_stats(im); colours=np.array([c for _,c,_ in stats]); lips=np.array([l for l,_,_ in stats])
+    empty=None
+    known=[i for i in range(64) if hint_empty>>i&1]
+    if len(known)>=3:
+        cand=np.median(colours[known],axis=0)
+        if np.mean(np.linalg.norm(colours[known]-cand,axis=1)<20)>=.8: empty=cand
+    if empty is None and EMPTY_COLOUR is not None and np.sum(np.linalg.norm(colours-EMPTY_COLOUR,axis=1)<20)>=3:
+        empty=EMPTY_COLOUR
+    if empty is None:
+        # Fresh start or new theme: prefer a large group without raised edges.
+        groups=[g for g in colour_groups(colours) if len(g)>=3] or colour_groups(colours)
+        best=min(groups,key=lambda g:(lips[g].mean()>25,-len(g)))
+        empty=np.median(colours[best],axis=0)
+    is_empty=np.linalg.norm(colours-empty,axis=1)<22
+    EMPTY_COLOUR=np.median(colours[is_empty],axis=0) if is_empty.any() else empty
+    return sum(1<<i for i in range(64) if not is_empty[i])
 
 def green_button(im):
     hsv=cv2.cvtColor(im[1270:1460,1140:1740],cv2.COLOR_BGR2HSV)
@@ -93,9 +131,6 @@ def recover_screen(im,unknown_count):
         print('Closing rating prompt.',flush=True); adb('shell','input','tap',1778,525); time.sleep(2); return
     if close_accessible_ad(): time.sleep(3); return
     print('Unknown screen: waiting to preserve the current game.',flush=True); time.sleep(10)
-
-def read_board(im):
-    return sum(1<<i for i,(sd,_) in enumerate(cell_stats(im)) if sd>10)
 
 def read_pieces(im):
     pieces=[]
@@ -201,7 +236,7 @@ def settle(before, expected, timeout=3.0):
             # Usually a transient effect; only report off-board if it persists.
             if time.time()>end: return im,None
             last=None; time.sleep(.2); continue
-        b=read_board(im)
+        b=read_board(im,FULL&~(before|expected))
         if b==expected: return im,b
         # A changed board read twice in a row is final (clear animations differ from both).
         if b!=before and b==last: return im,b
@@ -220,7 +255,7 @@ def main():
     ap.add_argument('--pickup-y',type=int,default=PICKUP_Y); ap.add_argument('--swipe-ms',type=int,default=300)
     args=ap.parse_args()
     corrections={}; turn=0; unknown_count=0; failed_board=None; failed_moves=set()
-    plan_seq=[]; im=None; started=time.time()
+    plan_seq=[]; im=None; started=time.time(); stuck_since=None
     while turn<args.max_moves:
         if im is None: im=capture()
         if not is_board(im):
@@ -259,8 +294,16 @@ def main():
             if failed_moves:
                 log('No untried placements left; re-reading the screen.'); failed_moves.clear(); time.sleep(1)
             else:
-                log('No legal moves; waiting for game-over screen.'); time.sleep(2)
+                # The game normally shows its result screen; if it never comes the screen
+                # is being misread, so save it for calibration and try the normal recovery.
+                stuck_since=stuck_since or time.time()
+                if time.time()-stuck_since>30:
+                    log('No legal moves for 30s without a game-over screen; trying recovery.')
+                    save_unknown(im); recover_screen(capture(),99); stuck_since=None
+                else:
+                    log('No legal moves; waiting for game-over screen.'); time.sleep(2)
             im=None; continue
+        stuck_since=None
         slot,x,y,expected,_,_=plan_seq.pop(0); p=by_slot[slot]
         log(f"Selected tray {slot+1}, grid column {x+1}, row {y+1}")
         if not args.play: return
@@ -307,11 +350,15 @@ if __name__=='__main__':
         except KeyboardInterrupt:
             print('\nStopped.', flush=True)
             break
-        except (RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            print(f'ADB or screen error: {e}. Retrying by rereading the screen in 5 seconds.', file=sys.stderr, flush=True)
+        except Exception as e:
+            # Keep playing for hours: log any error, wait for the tablet, and start over.
+            import traceback; traceback.print_exc()
+            print(f'Error: {e!r}. Rereading the screen in 5 seconds.', file=sys.stderr, flush=True)
             if '--play' not in sys.argv:
                 sys.exit(1)
             time.sleep(5)
+            try: subprocess.run(['adb','wait-for-device'],timeout=120)
+            except Exception: pass
 
 
 

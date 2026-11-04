@@ -139,7 +139,7 @@ def _survival(b, triples):
     return total / len(triples)
 
 
-def plan(board, pieces, avoid=frozenset(), width=300, lookahead=10, seed=0):
+def plan(board, pieces, avoid=frozenset(), width=300, lookahead=16, seed=0, min_filled=12, candidates=10):
     """Return the best full sequence [(slot, x, y, board_after), ...].
 
     pieces: list of (slot, cells). avoid: first moves (slot, x, y) to skip.
@@ -157,11 +157,11 @@ def plan(board, pieces, avoid=frozenset(), width=300, lookahead=10, seed=0):
     most = max(len(s[2]) for s in finished)
     finished = [s for s in finished if len(s[2]) == most]
     ranked = sorted(finished, key=lambda s: s[0] + fit_eval(s[1]), reverse=True)
-    top = ranked[:8]
+    top = ranked[:max(8, candidates)]
     filled = top[0][1].bit_count()
-    if lookahead and len(top) > 1 and filled >= 20:
+    if lookahead and len(top) > 1 and filled >= min_filled:
         rng = random.Random(seed ^ board)
         triples = [[(i, SHAPES[k]) for i, k in enumerate(rng.choices(range(len(SHAPES)), PROBS, k=3))]
                    for _ in range(lookahead)]
-        top = sorted(top[:6], key=lambda s: s[0] + 0.5 * fit_eval(s[1]) + _survival(s[1], triples), reverse=True)
+        top = sorted(top[:candidates], key=lambda s: s[0] + 0.5 * fit_eval(s[1]) + _survival(s[1], triples), reverse=True)
     return [tuple(m) for m in top[0][2]]

@@ -10,3 +10,5 @@ ad.png
 menu.png
 latest.png
 unknown-screens/
+*.png
+bot_next.py
