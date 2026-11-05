@@ -25,7 +25,7 @@ VERSIONS = [
     ('v1 original', 'cd316c3', 'choose'),
     ('v2 bitboard planner', '9ed7b94', 'plan'),
     ('v3 look-ahead', '0347688', 'plan'),
-    ('v4 combos', None, 'combo'),
+    ('v4 combos', 'f28798f', 'combo'),
 ]
 # Measured on the tablet (moves/min from bot.log over 100+ moves). None = not measured.
 LIVE_SPEED = {'v1 original': None, 'v2 bitboard planner': None, 'v3 look-ahead': 29,
