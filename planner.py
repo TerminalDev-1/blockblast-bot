@@ -9,6 +9,7 @@ within every COMBO_WINDOW placements. `since` counts placements since the last
 clear; the planner rewards clears that extend a streak, penalises breaking it,
 and prefers ending a tray with lines ready to clear when the streak is at risk.
 """
+import heapq
 import math
 import random
 from functools import lru_cache
@@ -42,10 +43,13 @@ def placements(cells):
 
 def drop(board, mask):
     """Place a mask (caller checks it is free) and clear full lines."""
-    nb = board | mask; cleared = 0; n = 0
-    for m in LINES:
-        if nb & m == m: cleared |= m; n += 1
-    return nb & ~cleared, n
+    nb = board | mask
+    # Full rows leave a bit in column 0, full columns a bit in row 0.
+    r = nb & (nb >> 1); r &= r >> 2; r &= r >> 4; r &= COL0
+    c = nb & (nb >> 8); c &= c >> 16; c &= c >> 32; c &= ROW0
+    if not (r | c): return nb, 0
+    cleared = r * 0xFF | c * 0x0101010101010101  # spread each bit over its line
+    return nb & ~cleared, r.bit_count() + c.bit_count()
 
 
 # Piece families seen in this game, weighted roughly by how often they appeared
@@ -73,6 +77,9 @@ LINE5 = ([m for _, _, m in placements(normalize([(i, 0) for i in range(5)]))] +
          [m for _, _, m in placements(normalize([(0, i) for i in range(5)]))])
 
 
+X_LE5 = sum(COLS[:6]); X_LE3 = sum(COLS[:4])  # cells where a 3-wide / 5-wide run can start
+
+
 @lru_cache(maxsize=500000)
 def fast_eval(b):
     """Cheap board score: open space, few single holes, smooth edges."""
@@ -85,8 +92,12 @@ def fast_eval(b):
     pockets = (e & ((left & right & (up | down)) | (up & down & (left | right)))).bit_count() - holes
     trans = ((b ^ (b >> 1)) & ~COL7).bit_count() + ((b ^ (b >> 8)) & ~ROW7).bit_count()
     score = e.bit_count() * 1.0 - holes * 6.0 - pockets * 1.5 - trans * 0.45
-    if any(not b & m for m in SQUARE3): score += 7
-    if any(not b & m for m in LINE5): score += 4
+    # Room for a 3x3 and for a 1x5, all positions at once: a bit survives the ANDs
+    # only if every cell of the shape starting there is empty.
+    h3 = e & (e >> 1) & (e >> 2) & X_LE5
+    if h3 & (h3 >> 8) & (h3 >> 16): score += 7
+    if (e & (e >> 1) & (e >> 2) & (e >> 3) & (e >> 4) & X_LE3) or (e & (e >> 8) & (e >> 16) & (e >> 24) & (e >> 32)):
+        score += 4
     return score
 
 
@@ -131,8 +142,7 @@ def clear_chance(b):
     for p, masks in zip(PROBS, SHAPE_MASKS):
         for m in masks:
             if b & m: continue
-            nb = b | m
-            if any(nb & line == line for line in LINES):
+            if drop(b, m)[1]:
                 total += p; break
     return total
 
@@ -161,8 +171,8 @@ def _expand(states, width, evaluate, combo=False):
                 old = best.get(key)
                 if old is None or old[0] < r:
                     best[key] = (r, nb, moves + [(slot, x, y, nb)], rest, s2)
-    out = sorted(best.values(), key=lambda s: s[0] + evaluate(s[1]), reverse=True)
-    return out[:width]
+    # Same as sorted(...)[:width], without sorting the states that get dropped.
+    return heapq.nlargest(width, best.values(), key=lambda s: s[0] + evaluate(s[1]))
 
 
 def _survival(b, triples):
@@ -179,6 +189,25 @@ def _survival(b, triples):
         else:
             total += max(s[0] + fast_eval(s[1]) for s in states)
     return total / len(triples)
+
+
+_POOL = None
+
+
+def use_workers(n):
+    """Run the look-ahead for the leading candidates in n worker processes
+    (call once, from the main program; 0 turns it off)."""
+    global _POOL
+    from concurrent.futures import ProcessPoolExecutor
+    if _POOL: _POOL.shutdown(cancel_futures=True)
+    _POOL = ProcessPoolExecutor(n) if n else None
+    if _POOL: list(_POOL.map(abs, range(n)))  # start the workers now
+
+
+def _survival_all(boards, triples):
+    if _POOL is None: return [_survival(b, triples) for b in boards]
+    try: return list(_POOL.map(_survival, boards, [triples] * len(boards)))
+    except Exception: return [_survival(b, triples) for b in boards]  # a broken pool must not stop play
 
 
 def plan(board, pieces, avoid=frozenset(), width=300, lookahead=16, seed=0, min_filled=12, candidates=10,
@@ -211,6 +240,9 @@ def plan(board, pieces, avoid=frozenset(), width=300, lookahead=16, seed=0, min_
         rng = random.Random(seed ^ board)
         triples = [[(i, SHAPES[k]) for i, k in enumerate(rng.choices(range(len(SHAPES)), PROBS, k=3))]
                    for _ in range(lookahead)]
-        top = sorted(top[:candidates], key=lambda s: s[0] + 0.5 * fit_eval(s[1]) + _survival(s[1], triples)
-                     + (combo_eval(s[1], s[4]) if combo else 0.0), reverse=True)
+        top = top[:candidates]
+        future = dict(zip(range(len(top)), _survival_all([s[1] for s in top], triples)))
+        order = sorted(range(len(top)), key=lambda i: top[i][0] + 0.5 * fit_eval(top[i][1]) + future[i]
+                       + (combo_eval(top[i][1], top[i][4]) if combo else 0.0), reverse=True)
+        top = [top[i] for i in order]
     return [tuple(m) for m in top[0][2]]

@@ -14,6 +14,8 @@ GAIN=1.47
 PICKUP_Y=1232
 FULL=(1<<64)-1
 RETRY=round(STEP/GAIN)  # finger distance that moves a piece by one cell
+SAFE_MS=200   # drag time that hasn't missed a drop; used for drags like ones that missed
+RETRY_MS=300  # drag time for retries
 
 SLOW=1  # screenshot timeouts are stretched over Wi-Fi (set in __main__)
 
@@ -50,11 +52,22 @@ class Shell:
 SHELL=Shell()
 
 def update_layout():
+    """Work out SCALE. Android's reported app height isn't reliable (with the
+    navigation bar on, the game sometimes still draws full height), so each candidate
+    scale is tried on a real screenshot and the one showing a board or menu wins."""
     global SCALE
     out=adb('shell','dumpsys','window','displays').decode('utf-8','replace')
     m=re.search(r'mAppBounds=Rect\(0, 0 - (\d+), (\d+)\)',out)
-    scale=int(m.group(2))/H if m and int(m.group(1))==W else 1.0
-    if not .7<scale<=1: scale=1.0
+    reported=int(m.group(2))/H if m and int(m.group(1))==W else 1.0
+    if not .7<reported<=1: reported=1.0
+    scale=reported
+    try:
+        raw=_capture_fast(); old=SCALE
+        for cand in dict.fromkeys((SCALE,reported,1.0)):
+            SCALE=cand; im=from_screen(raw)
+            if is_board(im) or green_button(im) or play_button(im): scale=cand; break
+        SCALE=old
+    except Exception: pass
     if abs(scale-SCALE)>1e-3:
         print(f'Game area is {round(scale*H)} px tall; scaling by {scale:.3f}.',flush=True)
     SCALE=scale
@@ -352,7 +365,7 @@ def settle(before, expected, placed, residual=0, timeout=3.0):
     without waiting ~1.5 s for the animation. residual: cells of earlier clears that may
     still be animating; they are ignored. TRACE records each read for the log
     (E expected, B unchanged, o other, - off-board)."""
-    end=time.time()+timeout; last=None; im=None
+    end=time.time()+timeout; last=None; im=None; unchanged=0
     cleared=(before|placed)&~expected
     while True:
         im=capture()
@@ -369,6 +382,9 @@ def settle(before, expected, placed, residual=0, timeout=3.0):
         same_as_expected=not (b^expected)&seen
         TRACE.append(('E' if full else 'e') if same_as_expected else 'B' if not (b^before)&seen else 'o')
         if same_as_expected: return im,expected,not full or bool(residual)
+        # Two fully visible reads with nothing changed: the drop didn't happen.
+        unchanged=unchanged+1 if full and not (b^before)&seen else 0
+        if unchanged>=2: return im,before,False
         if cleared|residual and (b^before)&seen and not (b^expected)&outside: return im,expected,True
         # A changed board read twice in a row is final (clear animations differ from both).
         # With cells hidden the read isn't trustworthy: return None so the caller re-reads.
@@ -396,6 +412,9 @@ def main():
     carry=None  # tray pieces still to place after an unchecked move
     pieces_known=False
     predicted=None  # board the last checked move should have produced
+    slow_from=float('inf')  # finger distance from which drags use SAFE_MS (learned from misses)
+    def drag_ms(sx,sy,dx,dy):
+        return SAFE_MS if args.swipe_ms<SAFE_MS and ((dx-sx)**2+(dy-sy)**2)**.5>=slow_from else args.swipe_ms
     while turn<args.max_moves:
         if carry is not None:
             # Mid-tray: the board is known from the plan, so no screenshot is needed.
@@ -427,6 +446,7 @@ def main():
                 # Usually new pieces sliding in; a new theme if it lasts.
                 tray_errors+=1
                 if tray_errors==20: save_unknown(im)
+                if tray_errors in (5,15): update_layout()  # the game may have been resized
                 if tray_errors>3: log(str(e),'Waiting for screen to settle.')
                 im=None; continue
             tray_errors=0
@@ -484,19 +504,22 @@ def main():
         if plan_seq:
             # More pieces of this tray follow: swipe now and check the whole tray after
             # its last piece. A miss shows up there and the bot re-reads and re-plans.
-            t0=time.time(); drag_piece(sx,sy,dx,dy,args.swipe_ms)
+            t0=time.time(); drag_piece(sx,sy,dx,dy,drag_ms(sx,sy,dx,dy))
             if cleared: clears.append((cleared,t0))
             since=0 if cleared else since+1
             trusted=expected; carry=[q for q in pieces if q['slot']!=slot]
             log(f'swipe {time.time()-t0:.2f}s, checked after the tray'); continue
         actual=board
-        for retry_x,retry_y in [(0,0),(0,RETRY),(0,-RETRY),(RETRY,0),(-RETRY,0)]:
-            # Each retry shifts the piece by one cell; never shift it off the board.
+        # A missed drop is usually a fast drag the game didn't keep up with, so the first
+        # retry is the same target dragged slowly; later retries shift it by one cell.
+        for retry_x,retry_y,ms in [(0,0,drag_ms(sx,sy,dx,dy)),(0,0,RETRY_MS),(0,RETRY,RETRY_MS),
+                                   (0,-RETRY,RETRY_MS),(RETRY,0,RETRY_MS),(-RETRY,0,RETRY_MS)]:
+            # Never shift the piece off the board.
             if x==0 and retry_x<0: continue
             if x+width==8 and retry_x>0: continue
             if y==0 and retry_y<0: continue
             if y+height==8 and retry_y>0: continue
-            t0=time.time(); drag_piece(sx,sy,dx+retry_x,dy+retry_y,args.swipe_ms)
+            t0=time.time(); drag_piece(sx,sy,dx+retry_x,dy+retry_y,ms)
             clears=[(m,t) for m,t in clears if t>t0-2.5]
             t1=time.time(); im,actual,early=settle(board,expected,placed,sum(m for m,_ in clears))
             trusted=actual if early else None
@@ -504,6 +527,9 @@ def main():
             log(f'swipe {t1-t0:.2f}s, check {time.time()-t1:.2f}s',''.join(TRACE)+(' (lines still clearing)' if early else '')); TRACE.clear()
             if actual is None: log('Screen changed; checking state.'); break
             if actual!=board: break
+            if ms<SAFE_MS:
+                dist=((dx-sx)**2+(dy-sy)**2)**.5; slow_from=min(slow_from,dist*.9)
+                log(f'Fast drag missed; drags from {slow_from:.0f} px now use {SAFE_MS} ms.')
             log('Retrying unplaced piece.')
         if actual is None: im=None; plan_seq=[]; trusted=None; continue
         predicted=expected if actual==expected else None
@@ -533,6 +559,9 @@ def pick_device():
             print('Opening Block Blast.',flush=True); adbwifi.open_app('com.block.juggle'); time.sleep(6)
 
 if __name__=='__main__':
+    if '--play' in sys.argv:
+        import os
+        planner.use_workers(max(1,min(10,(os.cpu_count() or 4)-2)))  # look-ahead in parallel
     while True:
         try:
             pick_device()
