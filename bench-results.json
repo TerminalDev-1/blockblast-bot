@@ -42,5 +42,16 @@
   "mean_streak": 14.41255605381166,
   "live_moves_per_min": 50,
   "commit": "f28798f"
+ },
+ "v5 deeper look-ahead": {
+  "games": 24,
+  "cap": 300,
+  "moves": 291.6666666666667,
+  "reached_cap": 22,
+  "lines_per_100": 48.4,
+  "best_streak": 38.375,
+  "mean_streak": 14.422018348623853,
+  "live_moves_per_min": 94,
+  "commit": "698ad26"
  }
 }
