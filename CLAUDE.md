@@ -18,7 +18,7 @@ Plays Block Blast (Classic) on a USB-connected Android tablet (2880x1800 landsca
 - Fast capture: `screencap | gzip -1` raw (≈0.35 s) with PNG fallback (≈0.75 s). screencap occasionally hangs on the tablet; each attempt has a 4–6 s timeout (the process is killed) and is retried, so a hang costs seconds, not the old 27 s freeze.
 
 ## Connection
-- `adbwifi.py` picks USB if plugged in, else wireless debugging (one-time `python adbwifi.py pair`). The bot waits for the tablet to come back after errors (e.g. flat battery). Screenshot timeouts are 3x longer over Wi-Fi (`SLOW`). Shared copy of `../new game bot/adbwifi.py`; keep in sync.
+- `adbwifi.py` picks USB if plugged in, else wireless debugging (one-time `python adbwifi.py pair`). The bot waits for the tablet to come back after errors (e.g. flat battery). Screenshot timeouts are 3x longer over Wi-Fi (`SLOW`). Shared copy of `../arrows bot/adbwifi.py`; keep in sync.
 
 ## Working on it
 - The game is often live: don't stop a running bot unless the user says so. Code changes only take effect after a restart.
