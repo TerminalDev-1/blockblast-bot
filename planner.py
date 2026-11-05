@@ -206,11 +206,19 @@ def use_workers(n):
 
 def _survival_all(boards, triples):
     if _POOL is None: return [_survival(b, triples) for b in boards]
-    try: return list(_POOL.map(_survival, boards, [triples] * len(boards)))
-    except Exception: return [_survival(b, triples) for b in boards]  # a broken pool must not stop play
+    # Small jobs (a few future trays each) keep every worker busy until the end;
+    # one job per board leaves workers idle while the slowest board finishes.
+    step = 4
+    chunks = [triples[i:i + step] for i in range(0, len(triples), step)]
+    try:
+        parts = list(_POOL.map(_survival, [b for b in boards for _ in chunks], [c for _ in boards for c in chunks]))
+    except Exception:
+        return [_survival(b, triples) for b in boards]  # a broken pool must not stop play
+    n = len(chunks)
+    return [sum(parts[i * n + j] * len(chunks[j]) for j in range(n)) / len(triples) for i in range(len(boards))]
 
 
-def plan(board, pieces, avoid=frozenset(), width=300, lookahead=32, seed=0, min_filled=12, candidates=14,
+def plan(board, pieces, avoid=frozenset(), width=300, lookahead=16, seed=0, min_filled=12, candidates=10,
          since=None):
     """Return the best full sequence [(slot, x, y, board_after), ...].
 

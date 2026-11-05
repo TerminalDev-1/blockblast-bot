@@ -60,12 +60,20 @@ def update_layout():
     m=re.search(r'mAppBounds=Rect\(0, 0 - (\d+), (\d+)\)',out)
     reported=int(m.group(2))/H if m and int(m.group(1))==W else 1.0
     if not .7<reported<=1: reported=1.0
+    # The menu and result screens show the navigation bar but the board is often
+    # full screen, so the size can change between screens. A board whose tray reads
+    # cleanly is the strongest evidence (the board alone looks fine at either size).
     scale=reported
     try:
-        raw=_capture_fast(); old=SCALE
-        for cand in dict.fromkeys((SCALE,reported,1.0)):
-            SCALE=cand; im=from_screen(raw)
-            if is_board(im) or green_button(im) or play_button(im): scale=cand; break
+        raw=_capture_fast(); old=SCALE; best=-1
+        for cand in dict.fromkeys((SCALE,reported,1.0)):  # current size first: wins ties
+            SCALE=cand; im=from_screen(raw); score=0
+            if is_board(im):
+                score=1
+                try: score=2 if read_pieces(im) is not None else 1
+                except RuntimeError: pass
+            elif green_button(im) or play_button(im): score=1
+            if score>best: best,scale=score,cand
         SCALE=old
     except Exception: pass
     if abs(scale-SCALE)>1e-3:
@@ -446,7 +454,7 @@ def main():
                 # Usually new pieces sliding in; a new theme if it lasts.
                 tray_errors+=1
                 if tray_errors==20: save_unknown(im)
-                if tray_errors in (5,15): update_layout()  # the game may have been resized
+                if tray_errors%10==3: update_layout()  # the game may have been resized
                 if tray_errors>3: log(str(e),'Waiting for screen to settle.')
                 im=None; continue
             tray_errors=0

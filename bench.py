@@ -128,25 +128,31 @@ def chart(summary, path='benchmark.jpg'):
         ('Lines cleared per 100 moves', [summary[k]['lines_per_100'] for k in labels], labels),
         ('Live speed on the tablet (moves/min)', [speed[k] for k in speed_labels], speed_labels),
     ]
-    fig, axes = plt.subplots(2, 2, figsize=(14, 8), dpi=110)
+    bg, panel, text, dim, grid = '#0d1117', '#161b22', '#e6edf3', '#8b949e', '#21262d'
+    fig, axes = plt.subplots(2, 2, figsize=(14, 8), dpi=110, facecolor=bg)
 
-    def colours(n):  # grey-blue for the oldest version to deep blue for the newest
-        a, b = (0x9a, 0xa5, 0xb1), (0x1b, 0x3f, 0xa8)
+    def greens(n):  # dull green for the oldest version, bright green for the newest
+        a, b = (0x2d, 0x4a, 0x35), (0x39, 0xd3, 0x53)
         return ['#%02x%02x%02x' % tuple(round(x + (y - x) * i / max(1, n - 1)) for x, y in zip(a, b))
                 for i in range(n)]
 
     for ax, (title, values, names) in zip(axes.flat, panels):
-        bars = ax.bar(range(len(values)), values, color=colours(len(values)), width=.62)
-        ax.set_title(title, fontsize=12, loc='left', fontweight='bold')
+        ax.set_facecolor(panel)
+        ax.grid(axis='y', color=grid, linewidth=1); ax.set_axisbelow(True)
+        bars = ax.bar(range(len(values)), values, color=greens(len(values)), width=.62)
+        ax.set_title(title, fontsize=12, loc='left', fontweight='bold', color=text)
         # Version number on the first line, its name wrapped below.
-        ax.set_xticks(range(len(names)), [n.replace(' ', '\n') for n in names], fontsize=8.5)
-        ax.spines[['top', 'right']].set_visible(False); ax.tick_params(axis='y', labelsize=9)
+        ax.set_xticks(range(len(names)), [n.replace(' ', '\n') for n in names], fontsize=8.5, color=dim)
+        for side in ('top', 'right', 'left'): ax.spines[side].set_visible(False)
+        ax.spines['bottom'].set_color(grid)
+        ax.tick_params(axis='y', labelsize=9, colors=dim, length=0); ax.tick_params(axis='x', length=0)
         for b, v in zip(bars, values):
             ax.text(b.get_x() + b.get_width() / 2, b.get_height(), f'{v:.1f}' if v < 20 else f'{v:.0f}',
-                    ha='center', va='bottom', fontsize=10)
+                    ha='center', va='bottom', fontsize=10, color=text, fontweight='bold')
     games = next(iter(summary.values()))['games']
-    fig.suptitle(f'Block Blast bot: every version on the same {games} simulated games', fontsize=14, fontweight='bold')
-    fig.tight_layout(rect=(0, 0, 1, .95)); fig.savefig(path, pil_kwargs={'quality': 88}); plt.close(fig)
+    fig.suptitle(f'How each version plays ({games} simulated games each, plus live speed)',
+                 fontsize=14, fontweight='bold', color=text)
+    fig.tight_layout(rect=(0, 0, 1, .95)); fig.savefig(path, facecolor=bg, pil_kwargs={'quality': 90}); plt.close(fig)
 
 
 if __name__ == '__main__':
