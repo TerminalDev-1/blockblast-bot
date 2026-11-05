@@ -64,5 +64,16 @@
   "mean_streak": 14.41255605381166,
   "live_moves_per_min": 87,
   "commit": "f16d74a"
+ },
+ "v5.4 highspeed max": {
+  "games": 24,
+  "cap": 300,
+  "moves": 295.5833333333333,
+  "reached_cap": 23,
+  "lines_per_100": 48.46349027347054,
+  "best_streak": 44.375,
+  "mean_streak": 14.26457399103139,
+  "live_moves_per_min": 100,
+  "commit": "85fa355"
  }
 }

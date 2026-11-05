@@ -28,6 +28,7 @@ VERSIONS = [
     ('v4 combos', 'f28798f', 'combo'),
     ('v5 deeper look-ahead', '698ad26', 'combo'),
     ('v5.1 fast planner', 'f16d74a', 'combo'),
+    ('v5.4 highspeed max', '85fa355', 'combo'),
 ]
 # Measured on the tablet (moves/min from bot.log over 100+ moves). None = not measured.
 LIVE_SPEED = {'v1 original': None, 'v2 bitboard planner': None, 'v3 look-ahead': 29,
@@ -35,7 +36,8 @@ LIVE_SPEED = {'v1 original': None, 'v2 bitboard planner': None, 'v3 look-ahead':
               'v4.1 faster checks': 67, 'v4.2 fast drags': 64,
               'v5 deeper look-ahead': 94, 'v5.1 fast planner': 87,
               'v5.3 flash max': 100,
-              'v5.3.1 flash highspeed max': 122}
+              'v5.3.1 flash highspeed max': 122,
+              'v5.4 highspeed max': 100}
 
 WINDOW = current.COMBO_WINDOW
 
