@@ -210,7 +210,7 @@ def _survival_all(boards, triples):
     except Exception: return [_survival(b, triples) for b in boards]  # a broken pool must not stop play
 
 
-def plan(board, pieces, avoid=frozenset(), width=300, lookahead=16, seed=0, min_filled=12, candidates=10,
+def plan(board, pieces, avoid=frozenset(), width=300, lookahead=32, seed=0, min_filled=12, candidates=14,
          since=None):
     """Return the best full sequence [(slot, x, y, board_after), ...].
 
