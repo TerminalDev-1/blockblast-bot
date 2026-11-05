@@ -126,7 +126,10 @@ def cell_stats(im):
             smooth=np.convolve(rows,kernel,'valid')
             lip=float(rows[30:70].mean()-smooth[76:STEP-6].min())
             centre=lab[y*STEP+30:y*STEP+82,x*STEP+30:x*STEP+82]
-            stats.append((lip,centre.reshape(-1,3).mean(0),float(centre[:,:,0].std())))
+            # Texture from the middle 32 px only: some themes bevel their blocks, which
+            # the wider patch counts as texture (a blue theme read as "not a board").
+            middle=lab[y*STEP+40:y*STEP+72,x*STEP+40:x*STEP+72,0]
+            stats.append((lip,centre.reshape(-1,3).mean(0),float(middle.std())))
     return stats
 
 def colour_groups(colours,radius=20):
@@ -141,7 +144,8 @@ def is_board(im):
     stats=cell_stats(im)
     # Board cells have flat centres (blocks and empty alike); menus and pop-ups don't.
     # A few textured cells are allowed for line-clear sparkles and combo text.
-    if sum(t>12 for _,_,t in stats)>8: return False
+    # (A saved full-screen ad has 8 textured cells, menus 13+, real boards 0-2.)
+    if sum(t>12 for _,_,t in stats)>6: return False
     return len(colour_groups(np.array([c for _,c,_ in stats]))[0])>=4
 
 EMPTY_COLOUR=None  # Lab colour of an empty cell in the current theme

@@ -4,6 +4,7 @@ drag.png
 
 bot.pid
 bot.log
+bot.prev.log
 bot-error.log
 
 ad.png
