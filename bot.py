@@ -1,6 +1,5 @@
-# v5.3-exp-flash-max: v5.1's planner (look-ahead kept: without it games ended after
-# ~250 moves), no per-tray check screenshot (the next tray's screenshot confirms the
-# board), 120 ms drags, learned wait for the next tray.
+# v5.3.1-flash-highspeed-max: v5.3 plus a stricter board check that corrects drift
+# from the screenshot it already takes, and 100 ms drags.
 import argparse, gzip, queue, struct, subprocess, threading, time, sys, re, xml.etree.ElementTree as ET
 from functools import lru_cache
 import cv2
@@ -106,7 +105,10 @@ def _capture_png():
     if im is None or im.shape[:2]!=(H,W): raise RuntimeError('Expected a 2880x1800 landscape screenshot.')
     return im
 
+SHOTS=[0]; WHY=[]  # screenshots since the last plan, and reasons for extra ones
+
 def capture():
+    SHOTS[0]+=1
     """Screenshot that never stalls for long: screencap occasionally hangs on the
     tablet, so each attempt is time-limited (the hung process is killed) and retried."""
     for attempt,grab in enumerate((_capture_fast,_capture_fast,_capture_png,_capture_fast,_capture_png)):
@@ -162,6 +164,13 @@ def visible_board(im,hint_empty=0):
     if len(colour_groups(np.array([stats[i][1] for i in flat]))[0])<4: return None,0
     visible=sum(1<<i for i in flat)
     return read_board(im,hint_empty&visible),visible
+
+def neighbours(m):
+    """m plus every cell next to it."""
+    return (m | ((m << 1) & ~COL0_MASK & FULL) | ((m >> 1) & ~COL7_MASK)
+            | ((m << 8) & FULL) | (m >> 8))
+
+COL0_MASK=sum(1<<(y*8) for y in range(8)); COL7_MASK=sum(1<<(y*8+7) for y in range(8))
 
 def shows(im,board,ignore=0,tol=0):
     """Does the screen show this board (ignoring covered and still-animating cells)?
@@ -418,7 +427,7 @@ def save_unknown(im):
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument('--play',action='store_true'); ap.add_argument('--max-moves',type=int,default=1000)
-    ap.add_argument('--pickup-y',type=int,default=PICKUP_Y); ap.add_argument('--swipe-ms',type=int,default=120)
+    ap.add_argument('--pickup-y',type=int,default=PICKUP_Y); ap.add_argument('--swipe-ms',type=int,default=80)
     args=ap.parse_args()
     corrections={}; turn=0; unknown_count=0; failed_board=None; failed_moves=set()
     plan_seq=[]; im=None; started=time.time(); stuck_since=None; tray_errors=0
@@ -437,6 +446,7 @@ def main():
     # A missed drop leaves its piece in the tray, so the same position comes back.
     # Then that tray is dragged slowly and checked; a second repeat avoids the spot.
     last_state=None; last_first=None; repeat=0
+    suspect=0  # extra blocks seen right after a clear, waiting for a second look
     slow_from=float('inf')  # finger distance from which drags use SAFE_MS (learned from misses)
     def drag_ms(sx,sy,dx,dy):
         return SAFE_MS if args.swipe_ms<SAFE_MS and ((dx-sx)**2+(dy-sy)**2)**.5>=slow_from else args.swipe_ms
@@ -452,9 +462,24 @@ def main():
                 # Known board (lines may still be clearing, text may cover part of it):
                 # just confirm the visible cells agree.
                 clears=[(m,t) for m,t in clears if t>time.time()-2.5]
-                recent=any(t>time.time()-1.5 for _,t in clears)
-                if shows(im,trusted,sum(m for m,_ in clears),2 if recent else 0): board=trusted
-                else: trusted=None
+                res=sum(m for m,_ in clears); recent=sum(m for m,t in clears if t>time.time()-1.5)
+                b,vis=visible_board(im,FULL&~trusted&~res)
+                if b is None: trusted=None; WHY.append('hidden')
+                else:
+                    # Compare only visible cells that aren't still clearing. Pop-up text
+                    # can't make a filled cell look empty, so a missing block is real.
+                    # Extra blocks count only when nothing is animating: combo text is
+                    # drawn in flat letters that look like blocks and can last past the
+                    # next tray. (A real block missed this way makes a drop fail, and the
+                    # repeated position is then checked.)
+                    seen=vis&~res
+                    missing=trusted&~b&seen; extra=b&~trusted&seen
+                    confirmed=0 if recent else extra
+                    if missing or confirmed:
+                        log(f'Board corrected from the screen ({missing.bit_count()} gone, {confirmed.bit_count()} added).')
+                        trusted=(trusted&~missing)|confirmed; predicted=trusted
+                    suspect=extra&~confirmed
+                    board=trusted
         if board is None and not is_board(im):
             if not args.play: print('Not on the game board.'); return
             unknown_count+=1; plan_seq=[]; im=None; trusted=None; clears=[]; predicted=None
@@ -475,12 +500,12 @@ def main():
                 if tray_errors%10==3: update_layout()  # the game may have been resized
                 if tray_errors>3: log(str(e),'Waiting for screen to settle.')
                 if probe: probe=False; deal_wait=min(.6,deal_wait+.04)
-                im=None; continue
+                WHY.append('tray-moving'); im=None; continue
             tray_errors=0
             if probe:
                 probe=False; dealt=len(pieces)==3 and all(at_rest(q) for q in pieces)
                 deal_wait=max(0.,deal_wait-.01) if dealt else min(.6,deal_wait+.04)
-            if not pieces: log('Waiting for pieces or game-over screen.'); im=None; plan_seq=[]; continue
+            if not pieces: WHY.append('tray-empty'); log('Waiting for pieces or game-over screen.'); im=None; plan_seq=[]; continue
             by_slot={p['slot']:p for p in pieces}
         if board!=failed_board: failed_board=board; failed_moves.clear()
         # Keep following the tray's plan while the board matches it; otherwise re-plan.
@@ -497,6 +522,7 @@ def main():
                 try: same=((shows(im2,board,res) if trusted is not None else is_board(im2) and read_board(im2)==board) and
                            [(p['slot'],p['cells']) for p in read_pieces(im2)]==[(p['slot'],p['cells']) for p in pieces])
                 except RuntimeError: same=False
+                WHY.append('confirm')
                 if not same: im=im2; continue
                 pieces=read_pieces(im2); by_slot={p['slot']:p for p in pieces}
             state=(board,tuple(sorted(tuple(p['cells']) for p in pieces)))
@@ -508,7 +534,7 @@ def main():
             last_first=seq[0][:3] if seq else None
             plan_seq=[]; prev=board
             for slot,x,y,nb in seq: plan_seq.append((slot,x,y,nb,prev,tuple(by_slot[slot]['cells']))); prev=nb
-            log(f'Planned {len(seq)} of {len(pieces)} pieces in {time.time()-t:.2f}s')
+            log(f'Planned {len(seq)} of {len(pieces)} pieces in {time.time()-t:.2f}s; {SHOTS[0]} shots',' '.join(WHY)); SHOTS[0]=0; WHY.clear()
         turn+=1; print(f'\nMove {turn}  ({turn/max(1e-9,time.time()-started)*60:.0f} moves/min)',flush=True); show(board,pieces)
         if not plan_seq:
             if trusted is not None or predicted is not None:
