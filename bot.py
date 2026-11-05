@@ -1,4 +1,4 @@
-import argparse, gzip, struct, subprocess, time, sys, re, xml.etree.ElementTree as ET
+import argparse, gzip, queue, struct, subprocess, threading, time, sys, re, xml.etree.ElementTree as ET
 from functools import lru_cache
 import cv2
 import planner
@@ -27,6 +27,28 @@ TRACE=[]
 def adb(*args,timeout=20):
     return subprocess.run(['adb',*map(str,args)],check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=timeout).stdout
 
+class Shell:
+    """One long-lived `adb shell` for input commands: starting a new adb process for
+    every swipe costs ~50 ms. A command that doesn't finish in time kills the shell;
+    the next command starts a fresh one."""
+    def __init__(self): self.proc=None
+    def _start(self):
+        self.proc=subprocess.Popen(['adb','shell'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,
+                                   stderr=subprocess.DEVNULL,bufsize=0)
+        self.lines=queue.Queue(); out=self.proc.stdout
+        threading.Thread(target=lambda:[self.lines.put(l) for l in iter(out.readline,b'')],daemon=True).start()
+    def run(self,cmd,timeout):
+        if self.proc is None or self.proc.poll() is not None: self._start()
+        try:
+            self.proc.stdin.write((cmd+'; echo __done__\n').encode())
+            end=time.time()+timeout
+            while self.lines.get(timeout=max(.01,end-time.time())).strip()!=b'__done__': pass
+        except (queue.Empty,OSError):
+            self.proc.kill(); self.proc=None
+            raise subprocess.TimeoutExpired(cmd,timeout)
+
+SHELL=Shell()
+
 def update_layout():
     global SCALE
     out=adb('shell','dumpsys','window','displays').decode('utf-8','replace')
@@ -53,7 +75,7 @@ def _capture_fast():
     data=gzip.decompress(adb('exec-out','screencap | gzip -1',timeout=4*SLOW))
     w,h=struct.unpack('<II',data[:8]); header=len(data)-w*h*4
     if (w,h)!=(W,H) or not 12<=header<=32: raise ValueError('unexpected raw screenshot')
-    return np.frombuffer(data,np.uint8,offset=header).reshape(H,W,4)[:,:,2::-1].copy()
+    return cv2.cvtColor(np.frombuffer(data,np.uint8,offset=header).reshape(H,W,4),cv2.COLOR_RGBA2BGR)
 
 def _capture_png():
     im=cv2.imdecode(np.frombuffer(adb('exec-out','screencap','-p',timeout=6*SLOW),np.uint8),cv2.IMREAD_COLOR)
@@ -102,6 +124,21 @@ def is_board(im):
     return len(colour_groups(np.array([c for _,c,_ in stats]))[0])>=4
 
 EMPTY_COLOUR=None  # Lab colour of an empty cell in the current theme
+
+def visible_board(im,hint_empty=0):
+    """(board, visible) even when pop-up text (combo, "Great!") covers part of it:
+    visible marks the flat cells that can be trusted. (None, 0) if this isn't the board."""
+    stats=cell_stats(im)
+    flat=[i for i,(_,_,t) in enumerate(stats) if t<=12]
+    if len(flat)<44: return None,0
+    if len(colour_groups(np.array([stats[i][1] for i in flat]))[0])<4: return None,0
+    visible=sum(1<<i for i in flat)
+    return read_board(im,hint_empty&visible),visible
+
+def shows(im,board,ignore=0):
+    """Does the screen show this board (ignoring covered and still-animating cells)?"""
+    b,visible=visible_board(im,FULL&~board&~ignore)
+    return b is not None and not (b^board)&visible&~ignore
 
 def read_board(im,hint_empty=0):
     """Empty cells all share one colour; everything else is a block.
@@ -279,10 +316,14 @@ def choose(board,pieces,avoid=frozenset()):
 
 def drag_piece(sx, sy, dx, dy, ms):
     # A single continuous swipe; the game moves the held piece GAIN x the finger.
-    adb('shell','input','swipe',*to_screen(sx,sy),*to_screen(dx,dy),ms,timeout=ms/1000+8)
+    cmd='input swipe %d %d %d %d %d'%(*to_screen(sx,sy),*to_screen(dx,dy),ms)
+    try: SHELL.run(cmd,ms/1000+3*SLOW)
+    except subprocess.TimeoutExpired:
+        adb('shell',cmd,timeout=ms/1000+8)
 
 def log(*parts):
-    print(time.strftime('%H:%M:%S'),*parts,flush=True)
+    t=time.time()
+    print(time.strftime('%H:%M:%S',time.localtime(t))+'.%d'%(t%1*10),*parts,flush=True)
 
 def show(board,pieces):
     for y in range(8): print(''.join('#' if board>>(y*8+x)&1 else '.' for x in range(8)))
@@ -296,23 +337,27 @@ def settle(before, expected, placed, residual=0, timeout=3.0):
     still be animating; they are ignored. TRACE records each read for the log
     (E expected, B unchanged, o other, - off-board)."""
     end=time.time()+timeout; last=None; im=None
-    cleared=(before|placed)&~expected; outside=FULL&~cleared&~residual; seen=FULL&~residual
+    cleared=(before|placed)&~expected
     while True:
         im=capture()
-        if not is_board(im):
+        b,visible=visible_board(im,FULL&~(before|expected|residual))
+        if b is None:
             TRACE.append('-')
-            # Usually a transient effect (clear animations, combo text); only report
+            # Usually a transient effect (clear animations, big combo text); only report
             # off-board if it persists.
             if time.time()>end: return im,None,False
-            last=None; time.sleep(.1); continue
-        b=read_board(im,FULL&~(before|expected|residual))
-        TRACE.append('E' if b==expected else 'B' if b&seen==before&seen else 'o')
-        if b==expected: return im,b,False
-        if cleared|residual and b&seen!=before&seen and b&outside==expected&outside: return im,expected,True
+            last=None; continue
+        # Cells hidden by pop-up text or still animating from earlier clears are ignored.
+        seen=visible&~residual; outside=seen&~cleared
+        full=seen==FULL&~residual
+        same_as_expected=not (b^expected)&seen
+        TRACE.append(('E' if full else 'e') if same_as_expected else 'B' if not (b^before)&seen else 'o')
+        if same_as_expected: return im,expected,not full or bool(residual)
+        if cleared|residual and (b^before)&seen and not (b^expected)&outside: return im,expected,True
         # A changed board read twice in a row is final (clear animations differ from both).
-        if b&seen!=before&seen and b==last: return im,b,False
-        if time.time()>end: return im,b,False
-        last=b
+        if full and (b^before)&seen and b==last: return im,b,False
+        if time.time()>end: return im,(b if full else None),False
+        last=b if full else None
 
 def save_unknown(im):
     import os
@@ -331,31 +376,42 @@ def main():
     clears=[]  # (cells, time) of recent line clears, which animate for ~1.5 s
     since=planner.COMBO_WINDOW  # placements since the last clear (combo streak tracking)
     carry=None  # tray pieces still to place after an unchecked move
+    pieces_known=False
     while turn<args.max_moves:
         if carry is not None:
             # Mid-tray: the board is known from the plan, so no screenshot is needed.
-            board,pieces=trusted,carry; carry=None
+            board,pieces=trusted,carry; carry=None; pieces_known=True
             by_slot={p['slot']:p for p in pieces}
         else:
             if im is None: im=capture()
             board=None
+            if trusted is not None:
+                # Known board (lines may still be clearing, text may cover part of it):
+                # just confirm the visible cells agree.
+                clears=[(m,t) for m,t in clears if t>time.time()-2.5]
+                if shows(im,trusted,sum(m for m,_ in clears)): board=trusted
+                else: trusted=None
         if board is None and not is_board(im):
             if not args.play: print('Not on the game board.'); return
             unknown_count+=1; plan_seq=[]; im=None; trusted=None; clears=[]
             # Never tap anything until the screen has been unrecognised for a few reads.
-            if unknown_count<5: time.sleep(.4); continue
+            if unknown_count<5: time.sleep(.1); continue
             if unknown_count==5: save_unknown(capture())
             recover_screen(capture(),unknown_count); continue
         unknown_count=0
-        if board is None:
-            board=trusted if trusted is not None else read_board(im)
+        if pieces_known:
+            pieces_known=False
+        else:
+            if board is None: board=read_board(im)
             try: pieces=read_pieces(im)
             except RuntimeError as e:
+                # Usually new pieces sliding in; a new theme if it lasts.
                 tray_errors+=1
-                if tray_errors==20: save_unknown(im)  # a new theme to calibrate
-                log(str(e),'Waiting for screen to settle.'); time.sleep(.15); im=None; continue
+                if tray_errors==20: save_unknown(im)
+                if tray_errors>3: log(str(e),'Waiting for screen to settle.')
+                im=None; continue
             tray_errors=0
-            if not pieces: log('Waiting for pieces or game-over screen.'); time.sleep(.3); im=None; plan_seq=[]; continue
+            if not pieces: log('Waiting for pieces or game-over screen.'); time.sleep(.1); im=None; plan_seq=[]; continue
             by_slot={p['slot']:p for p in pieces}
         if board!=failed_board: failed_board=board; failed_moves.clear()
         # Keep following the tray's plan while the board matches it; otherwise re-plan.
@@ -364,8 +420,9 @@ def main():
         if not following:
             # New tray pieces animate in and can be misread mid-animation;
             # plan only from two consecutive screenshots that agree.
-            time.sleep(.15); im2=capture()
-            try: same=(is_board(im2) and (trusted is not None or read_board(im2)==board) and
+            im2=capture()
+            res=sum(m for m,t in clears if t>time.time()-2.5)
+            try: same=((shows(im2,board,res) if trusted is not None else is_board(im2) and read_board(im2)==board) and
                        [(p['slot'],p['cells']) for p in read_pieces(im2)]==[(p['slot'],p['cells']) for p in pieces])
             except RuntimeError: same=False
             if not same: im=im2; continue

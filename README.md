@@ -17,6 +17,7 @@ Every planner version plays the same simulated games (`python bench.py`); live s
 | v3 look-ahead | Samples likely future trays when the board fills up; learns each colour theme. |
 | v3.1 line-clear skip | Doesn't wait for line-clear animations; works with the navigation bar shown. |
 | v4 combos | Keeps combo streaks alive; swipes a whole tray and checks the board once per tray. |
+| v4.1 faster checks | Reads the board through combo pop-up text, no fixed waits, one long-lived adb shell for swipes (same planner as v4). |
 
 ## How it works
 
