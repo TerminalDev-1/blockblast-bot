@@ -355,9 +355,11 @@ def settle(before, expected, placed, residual=0, timeout=3.0):
         if same_as_expected: return im,expected,not full or bool(residual)
         if cleared|residual and (b^before)&seen and not (b^expected)&outside: return im,expected,True
         # A changed board read twice in a row is final (clear animations differ from both).
-        if full and (b^before)&seen and b==last: return im,b,False
+        # With cells hidden the read isn't trustworthy: return None so the caller re-reads.
+        if (b^before)&seen and last is not None and last[1]==seen and not (b^last[0])&seen:
+            return im,(b if full else None),False
         if time.time()>end: return im,(b if full else None),False
-        last=b if full else None
+        last=(b,seen)
 
 def save_unknown(im):
     import os
@@ -368,7 +370,7 @@ def save_unknown(im):
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument('--play',action='store_true'); ap.add_argument('--max-moves',type=int,default=1000)
-    ap.add_argument('--pickup-y',type=int,default=PICKUP_Y); ap.add_argument('--swipe-ms',type=int,default=300)
+    ap.add_argument('--pickup-y',type=int,default=PICKUP_Y); ap.add_argument('--swipe-ms',type=int,default=150)
     args=ap.parse_args()
     corrections={}; turn=0; unknown_count=0; failed_board=None; failed_moves=set()
     plan_seq=[]; im=None; started=time.time(); stuck_since=None; tray_errors=0
