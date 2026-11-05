@@ -1,5 +1,5 @@
-# v5.3.1-flash-highspeed-max: v5.3 plus a stricter board check that corrects drift
-# from the screenshot it already takes, and 100 ms drags.
+# v5.4-highspeed-max: v5.3.1's speed when the board is open; when it is crowded (where
+# games are lost) a deeper look-ahead and a real check screenshot after the tray.
 import argparse, gzip, queue, struct, subprocess, threading, time, sys, re, xml.etree.ElementTree as ET
 from functools import lru_cache
 import cv2
@@ -18,6 +18,7 @@ FULL=(1<<64)-1
 RETRY=round(STEP/GAIN)  # finger distance that moves a piece by one cell
 SAFE_MS=200   # drag time that hasn't missed a drop; used for drags like ones that missed
 RETRY_MS=300  # drag time for retries
+DANGER_FROM=28  # cells filled after a tray from which the last piece gets a check screenshot
 
 SLOW=1  # screenshot timeouts are stretched over Wi-Fi (set in __main__)
 
@@ -446,6 +447,7 @@ def main():
     # A missed drop leaves its piece in the tray, so the same position comes back.
     # Then that tray is dragged slowly and checked; a second repeat avoids the spot.
     last_state=None; last_first=None; repeat=0
+    danger=False  # this tray leaves a crowded board
     suspect=0  # extra blocks seen right after a clear, waiting for a second look
     slow_from=float('inf')  # finger distance from which drags use SAFE_MS (learned from misses)
     def drag_ms(sx,sy,dx,dy):
@@ -475,11 +477,18 @@ def main():
                     seen=vis&~res
                     missing=trusted&~b&seen; extra=b&~trusted&seen
                     confirmed=0 if recent else extra
-                    if missing or confirmed:
-                        log(f'Board corrected from the screen ({missing.bit_count()} gone, {confirmed.bit_count()} added).')
-                        trusted=(trusted&~missing)|confirmed; predicted=trusted
-                    suspect=extra&~confirmed
-                    board=trusted
+                    if (missing|confirmed).bit_count()>=4:
+                        # A big difference means the picture or this screenshot is badly
+                        # off (games were lost this way): read the board carefully, from
+                        # two screenshots that agree, before planning again.
+                        log(f'Board very different ({missing.bit_count()} gone, {confirmed.bit_count()} added); reading carefully.')
+                        trusted=None; predicted=None; suspect=0; WHY.append('big-diff')
+                    else:
+                        if missing or confirmed:
+                            log(f'Board corrected from the screen ({missing.bit_count()} gone, {confirmed.bit_count()} added).')
+                            trusted=(trusted&~missing)|confirmed; predicted=trusted
+                        suspect=extra&~confirmed
+                        board=trusted
         if board is None and not is_board(im):
             if not args.play: print('Not on the game board.'); return
             unknown_count+=1; plan_seq=[]; im=None; trusted=None; clears=[]; predicted=None
@@ -532,6 +541,9 @@ def main():
             t=time.time()
             seq=planner.plan(board,[(p['slot'],p['cells']) for p in pieces],failed_moves,seed=turn,since=since)
             last_first=seq[0][:3] if seq else None
+            # Danger: the tray leaves the board crowded. Check the board for real after
+            # it, so the next (risky) plan isn't made on a drifted picture.
+            danger=bool(seq) and seq[-1][3].bit_count()>=DANGER_FROM
             plan_seq=[]; prev=board
             for slot,x,y,nb in seq: plan_seq.append((slot,x,y,nb,prev,tuple(by_slot[slot]['cells']))); prev=nb
             log(f'Planned {len(seq)} of {len(pieces)} pieces in {time.time()-t:.2f}s; {SHOTS[0]} shots',' '.join(WHY)); SHOTS[0]=0; WHY.clear()
@@ -567,11 +579,11 @@ def main():
         dy=sy+(target_y-args.pickup_y)/GAIN+adjust_y
         placed=sum(1<<((y+b)*8+x+a) for a,b in p['cells'])
         cleared=(board|placed)&~expected
-        careful=repeat>=1
+        careful=repeat>=1 or danger
         if plan_seq or not careful:
             # Swipe without a check: the next tray's screenshot confirms the board, and
             # a missed drop shows up there as a piece still in the tray.
-            t0=time.time(); drag_piece(sx,sy,dx,dy,RETRY_MS if careful else drag_ms(sx,sy,dx,dy))
+            t0=time.time(); drag_piece(sx,sy,dx,dy,RETRY_MS if repeat>=1 else drag_ms(sx,sy,dx,dy))
             if cleared: clears.append((cleared,t0))
             since=0 if cleared else since+1
             trusted=expected

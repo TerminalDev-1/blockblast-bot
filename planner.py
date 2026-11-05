@@ -219,11 +219,14 @@ def _survival_all(boards, triples):
 
 
 def plan(board, pieces, avoid=frozenset(), width=300, lookahead=16, seed=0, min_filled=12, candidates=10,
-         since=None):
+         since=None, danger_from=28, danger_lookahead=48, danger_candidates=16):
     """Return the best full sequence [(slot, x, y, board_after), ...].
 
     pieces: list of (slot, cells). avoid: first moves (slot, x, y) to skip.
     since: placements since the last line clear (None = ignore combos).
+    Danger mode: when even the best result leaves at least danger_from cells filled,
+    the board is crowded (where games are lost), so the look-ahead samples
+    danger_lookahead future trays over danger_candidates candidates instead.
     Places as many pieces as possible; returns [] if none fit.
     """
     pieces = [(slot, tuple(cells)) for slot, cells in pieces]
@@ -242,8 +245,10 @@ def plan(board, pieces, avoid=frozenset(), width=300, lookahead=16, seed=0, min_
     if combo:
         # Only the leaders get the (slower) combo term; the rest can't catch up.
         ranked = sorted(ranked[:40], key=lambda s: s[0] + fit_eval(s[1]) + combo_eval(s[1], s[4]), reverse=True)
+    filled = ranked[0][1].bit_count()
+    if filled >= danger_from:
+        lookahead = max(lookahead, danger_lookahead); candidates = max(candidates, danger_candidates)
     top = ranked[:max(8, candidates)]
-    filled = top[0][1].bit_count()
     if lookahead and len(top) > 1 and filled >= min_filled:
         rng = random.Random(seed ^ board)
         triples = [[(i, SHAPES[k]) for i, k in enumerate(rng.choices(range(len(SHAPES)), PROBS, k=3))]
