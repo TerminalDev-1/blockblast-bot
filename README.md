@@ -20,6 +20,7 @@ Every planner version plays the same simulated games (`python bench.py`); live s
 | v4.1 faster checks | Reads the board through combo pop-up text, no fixed waits, one long-lived adb shell for swipes (same planner as v4). |
 | v4.2 fast drags | 150 ms drags, new trays planned from one screenshot, wood-theme tray fix. Measured late in a ~400k game, where planning and line clears take longer, so it isn't directly comparable with v4.1's early-game 67. |
 | v5 deeper look-ahead | Planning ~6x faster (bit tricks + look-ahead in worker processes), so it can sample 32 future trays instead of 16. Missed fast drops are spotted in ~0.8 s and retried with a slow drag; after a miss, long drags slow down. On 20 longer games (600 moves) it survived longer (503 vs 466 moves); on the chart's 24 games it was slightly behind v4 — about even overall. Live speed measured early in a new game. |
+| v5.1 fast planner | Back to the lighter look-ahead (16 future trays; the deeper one wasn't clearly better) with work spread evenly over the CPU cores: planning ~0.03 s per tray. Also handles the blue bevelled theme and size changes between menu and board. Live 87/min was measured over 865 moves (a longer run than v5's 302 early-game moves), median tray 100/min. |
 
 ## How it works
 

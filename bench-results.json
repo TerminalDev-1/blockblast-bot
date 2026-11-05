@@ -53,5 +53,16 @@
   "mean_streak": 14.422018348623853,
   "live_moves_per_min": 94,
   "commit": "698ad26"
+ },
+ "v5.1 fast planner": {
+  "games": 24,
+  "cap": 300,
+  "moves": 298.7083333333333,
+  "reached_cap": 23,
+  "lines_per_100": 48.50048821313991,
+  "best_streak": 45.375,
+  "mean_streak": 14.41255605381166,
+  "live_moves_per_min": 87,
+  "commit": "f16d74a"
  }
 }
