@@ -17,8 +17,36 @@ RETRY=round(STEP/GAIN)  # finger distance that moves a piece by one cell
 
 SLOW=1  # screenshot timeouts are stretched over Wi-Fi (set in __main__)
 
+# All coordinates in this file are for the game filling the full 1800 px height.
+# When the tablet shows its 3-button navigation bar the game gets less height and
+# shrinks around the screen's centre line, so screenshots are scaled back to that
+# layout and taps/swipes are scaled the other way.
+SCALE=1.0
+TRACE=[]
+
 def adb(*args,timeout=20):
     return subprocess.run(['adb',*map(str,args)],check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=timeout).stdout
+
+def update_layout():
+    global SCALE
+    out=adb('shell','dumpsys','window','displays').decode('utf-8','replace')
+    m=re.search(r'mAppBounds=Rect\(0, 0 - (\d+), (\d+)\)',out)
+    scale=int(m.group(2))/H if m and int(m.group(1))==W else 1.0
+    if not .7<scale<=1: scale=1.0
+    if abs(scale-SCALE)>1e-3:
+        print(f'Game area is {round(scale*H)} px tall; scaling by {scale:.3f}.',flush=True)
+    SCALE=scale
+
+def to_screen(x,y):
+    return round(W/2+(x-W/2)*SCALE),round(y*SCALE)
+
+def tap(x,y):
+    adb('shell','input','tap',*to_screen(x,y))
+
+def from_screen(im):
+    if SCALE==1: return im
+    half=round(W/2*SCALE)
+    return cv2.resize(im[:round(H*SCALE),W//2-half:W//2+half],(W,H),interpolation=cv2.INTER_LINEAR)
 
 def _capture_fast():
     # Raw pixels compressed on the tablet are ~2.5x faster than PNG.
@@ -36,7 +64,7 @@ def capture():
     """Screenshot that never stalls for long: screencap occasionally hangs on the
     tablet, so each attempt is time-limited (the hung process is killed) and retried."""
     for attempt,grab in enumerate((_capture_fast,_capture_fast,_capture_png,_capture_fast,_capture_png)):
-        try: return grab()
+        try: return from_screen(grab())
         except (subprocess.TimeoutExpired,subprocess.CalledProcessError,OSError,EOFError,ValueError,struct.error) as e:
             print(time.strftime('%H:%M:%S'),f'Screenshot attempt {attempt+1} failed ({type(e).__name__}); retrying.',flush=True)
     raise RuntimeError('Screenshots keep failing.')
@@ -135,12 +163,14 @@ def recover_screen(im,unknown_count):
     current=next((line for line in focus.splitlines() if 'mCurrentFocus=' in line),'')
     if current and 'com.block.juggle/' not in current:
         print('Returning from another app or ad.',flush=True); adb('shell','input','keyevent','BACK'); time.sleep(2); return
+    old=SCALE; update_layout()
+    if SCALE!=old: return  # the navigation bar changed; re-read with the new scale
     if play_button(im):
-        print('Result screen: starting next attempt against the current best.',flush=True); adb('shell','input','tap',1440,1335); time.sleep(5); return
+        print('Result screen: starting next attempt against the current best.',flush=True); tap(1440,1335); time.sleep(5); return
     if green_button(im):
-        print('Starting or restarting Classic.',flush=True); adb('shell','input','tap',1440,1370); time.sleep(4); return
+        print('Starting or restarting Classic.',flush=True); tap(1440,1370); time.sleep(4); return
     if rating_popup(im):
-        print('Closing rating prompt.',flush=True); adb('shell','input','tap',1778,525); time.sleep(2); return
+        print('Closing rating prompt.',flush=True); tap(1778,525); time.sleep(2); return
     if close_accessible_ad(): time.sleep(3); return
     print('Unknown screen: waiting to preserve the current game.',flush=True); time.sleep(10)
 
@@ -249,7 +279,7 @@ def choose(board,pieces,avoid=frozenset()):
 
 def drag_piece(sx, sy, dx, dy, ms):
     # A single continuous swipe; the game moves the held piece GAIN x the finger.
-    adb('shell','input','swipe',round(sx),round(sy),round(dx),round(dy),ms,timeout=ms/1000+8)
+    adb('shell','input','swipe',*to_screen(sx,sy),*to_screen(dx,dy),ms,timeout=ms/1000+8)
 
 def log(*parts):
     print(time.strftime('%H:%M:%S'),*parts,flush=True)
@@ -258,20 +288,30 @@ def show(board,pieces):
     for y in range(8): print(''.join('#' if board>>(y*8+x)&1 else '.' for x in range(8)))
     for p in pieces: print('tray',p['slot']+1,'cells',p['cells'])
 
-def settle(before, expected, timeout=3.0):
-    """Capture until the board shows the move's result. Returns (image, board) or (image, None) off-board."""
+def settle(before, expected, placed, residual=0, timeout=3.0):
+    """Capture until the board shows the move's result.
+    Returns (image, board, early): board is None off-board; early means lines are still
+    clearing but everything outside them already matches, so the move is accepted
+    without waiting ~1.5 s for the animation. residual: cells of earlier clears that may
+    still be animating; they are ignored. TRACE records each read for the log
+    (E expected, B unchanged, o other, - off-board)."""
     end=time.time()+timeout; last=None; im=None
+    cleared=(before|placed)&~expected; outside=FULL&~cleared&~residual; seen=FULL&~residual
     while True:
         im=capture()
         if not is_board(im):
-            # Usually a transient effect; only report off-board if it persists.
-            if time.time()>end: return im,None
-            last=None; time.sleep(.2); continue
-        b=read_board(im,FULL&~(before|expected))
-        if b==expected: return im,b
+            TRACE.append('-')
+            # Usually a transient effect (clear animations, combo text); only report
+            # off-board if it persists.
+            if time.time()>end: return im,None,False
+            last=None; time.sleep(.1); continue
+        b=read_board(im,FULL&~(before|expected|residual))
+        TRACE.append('E' if b==expected else 'B' if b&seen==before&seen else 'o')
+        if b==expected: return im,b,False
+        if cleared|residual and b&seen!=before&seen and b&outside==expected&outside: return im,expected,True
         # A changed board read twice in a row is final (clear animations differ from both).
-        if b!=before and b==last: return im,b
-        if time.time()>end: return im,b
+        if b&seen!=before&seen and b==last: return im,b,False
+        if time.time()>end: return im,b,False
         last=b
 
 def save_unknown(im):
@@ -287,24 +327,26 @@ def main():
     args=ap.parse_args()
     corrections={}; turn=0; unknown_count=0; failed_board=None; failed_moves=set()
     plan_seq=[]; im=None; started=time.time(); stuck_since=None; tray_errors=0
+    trusted=None  # board accepted while lines are still clearing on screen
+    clears=[]  # (cells, time) of recent line clears, which animate for ~1.5 s
     while turn<args.max_moves:
         if im is None: im=capture()
         if not is_board(im):
             if not args.play: print('Not on the game board.'); return
-            unknown_count+=1; plan_seq=[]; im=None
+            unknown_count+=1; plan_seq=[]; im=None; trusted=None; clears=[]
             # Never tap anything until the screen has been unrecognised for a few reads.
             if unknown_count<5: time.sleep(.4); continue
             if unknown_count==5: save_unknown(capture())
             recover_screen(capture(),unknown_count); continue
-        unknown_count=0; board=read_board(im)
+        unknown_count=0; board=trusted if trusted is not None else read_board(im)
         try: pieces=read_pieces(im)
         except RuntimeError as e:
             tray_errors+=1
             if tray_errors==20: save_unknown(im)  # a new theme to calibrate
-            log(str(e),'Waiting for screen to settle.'); time.sleep(.5); im=None; continue
+            log(str(e),'Waiting for screen to settle.'); time.sleep(.15); im=None; continue
         tray_errors=0
         if board!=failed_board: failed_board=board; failed_moves.clear()
-        if not pieces: log('Waiting for pieces or game-over screen.'); time.sleep(1); im=None; plan_seq=[]; continue
+        if not pieces: log('Waiting for pieces or game-over screen.'); time.sleep(.3); im=None; plan_seq=[]; continue
         by_slot={p['slot']:p for p in pieces}
         # Keep following the tray's plan while the board matches it; otherwise re-plan.
         following=(plan_seq and plan_seq[0][0] in by_slot and plan_seq[0][4]==board
@@ -313,7 +355,7 @@ def main():
             # New tray pieces animate in and can be misread mid-animation;
             # plan only from two consecutive screenshots that agree.
             time.sleep(.15); im2=capture()
-            try: same=(is_board(im2) and read_board(im2)==board and
+            try: same=(is_board(im2) and (trusted is not None or read_board(im2)==board) and
                        [(p['slot'],p['cells']) for p in read_pieces(im2)]==[(p['slot'],p['cells']) for p in pieces])
             except RuntimeError: same=False
             if not same: im=im2; continue
@@ -336,7 +378,7 @@ def main():
                     save_unknown(im); recover_screen(capture(),99); stuck_since=None
                 else:
                     log('No legal moves; waiting for game-over screen.'); time.sleep(2)
-            im=None; continue
+            im=None; trusted=None; continue
         stuck_since=None
         slot,x,y,expected,_,_=plan_seq.pop(0); p=by_slot[slot]
         log(f"Selected tray {slot+1}, grid column {x+1}, row {y+1}")
@@ -348,6 +390,7 @@ def main():
         target_y=GY+(y+height/2)*STEP
         dx=sx+(target_x-tray_center_x)/GAIN+adjust_x
         dy=sy+(target_y-args.pickup_y)/GAIN+adjust_y
+        placed=sum(1<<((y+b)*8+x+a) for a,b in p['cells'])
         actual=board
         for retry_x,retry_y in [(0,0),(0,RETRY),(0,-RETRY),(RETRY,0),(-RETRY,0)]:
             # Each retry shifts the piece by one cell; never shift it off the board.
@@ -355,8 +398,12 @@ def main():
             if x+width==8 and retry_x>0: continue
             if y==0 and retry_y<0: continue
             if y+height==8 and retry_y>0: continue
-            drag_piece(sx,sy,dx+retry_x,dy+retry_y,args.swipe_ms)
-            im,actual=settle(board,expected)
+            t0=time.time(); drag_piece(sx,sy,dx+retry_x,dy+retry_y,args.swipe_ms)
+            clears=[(m,t) for m,t in clears if t>t0-2.5]
+            t1=time.time(); im,actual,early=settle(board,expected,placed,sum(m for m,_ in clears))
+            trusted=actual if early else None
+            if actual==expected and (board|placed)&~expected: clears.append(((board|placed)&~expected,t1))
+            log(f'swipe {t1-t0:.2f}s, check {time.time()-t1:.2f}s',''.join(TRACE)+(' (lines still clearing)' if early else '')); TRACE.clear()
             if actual is None: log('Screen changed; checking state.'); break
             if actual!=board: break
             log('Retrying unplaced piece.')
@@ -379,6 +426,7 @@ def main():
 def pick_device():
     global SLOW
     SLOW=3 if adbwifi.is_wireless(adbwifi.ensure()) else 1
+    update_layout()
     if '--play' in sys.argv:
         focus=adb('shell','dumpsys','window').decode('utf-8','replace')
         if 'com.block.juggle/' not in next((l for l in focus.splitlines() if 'mCurrentFocus=' in l),''):
