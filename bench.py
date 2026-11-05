@@ -128,12 +128,18 @@ def chart(summary, path='benchmark.jpg'):
         ('Lines cleared per 100 moves', [summary[k]['lines_per_100'] for k in labels], labels),
         ('Live speed on the tablet (moves/min)', [speed[k] for k in speed_labels], speed_labels),
     ]
-    fig, axes = plt.subplots(2, 2, figsize=(12, 7.5), dpi=110)
-    colours = ['#9aa5b1', '#7b93c4', '#5b7fd1', '#2f5fd8', '#1b3fa8']
+    fig, axes = plt.subplots(2, 2, figsize=(14, 8), dpi=110)
+
+    def colours(n):  # grey-blue for the oldest version to deep blue for the newest
+        a, b = (0x9a, 0xa5, 0xb1), (0x1b, 0x3f, 0xa8)
+        return ['#%02x%02x%02x' % tuple(round(x + (y - x) * i / max(1, n - 1)) for x, y in zip(a, b))
+                for i in range(n)]
+
     for ax, (title, values, names) in zip(axes.flat, panels):
-        bars = ax.bar(range(len(values)), values, color=colours[-len(values):], width=.62)
+        bars = ax.bar(range(len(values)), values, color=colours(len(values)), width=.62)
         ax.set_title(title, fontsize=12, loc='left', fontweight='bold')
-        ax.set_xticks(range(len(names)), [n.replace(' ', '\n', 1) for n in names], fontsize=9)
+        # Version number on the first line, its name wrapped below.
+        ax.set_xticks(range(len(names)), [n.replace(' ', '\n') for n in names], fontsize=8.5)
         ax.spines[['top', 'right']].set_visible(False); ax.tick_params(axis='y', labelsize=9)
         for b, v in zip(bars, values):
             ax.text(b.get_x() + b.get_width() / 2, b.get_height(), f'{v:.1f}' if v < 20 else f'{v:.0f}',
