@@ -33,7 +33,8 @@ VERSIONS = [
 LIVE_SPEED = {'v1 original': None, 'v2 bitboard planner': None, 'v3 look-ahead': 29,
               'v3.1 line-clear skip': 39, 'v4 combos': 50,
               'v4.1 faster checks': 67, 'v4.2 fast drags': 64,
-              'v5 deeper look-ahead': 94, 'v5.1 fast planner': 87}
+              'v5 deeper look-ahead': 94, 'v5.1 fast planner': 87,
+              'v5.3 flash max': 100}
 
 WINDOW = current.COMBO_WINDOW
 

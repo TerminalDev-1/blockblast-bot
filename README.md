@@ -21,6 +21,7 @@ Every planner version plays the same simulated games (`python bench.py`); live s
 | v4.2 fast drags | 150 ms drags, new trays planned from one screenshot, wood-theme tray fix. Measured late in a ~400k game, where planning and line clears take longer, so it isn't directly comparable with v4.1's early-game 67. |
 | v5 deeper look-ahead | Planning ~6x faster (bit tricks + look-ahead in worker processes), so it can sample 32 future trays instead of 16. Missed fast drops are spotted in ~0.8 s and retried with a slow drag; after a miss, long drags slow down. On 20 longer games (600 moves) it survived longer (503 vs 466 moves); on the chart's 24 games it was slightly behind v4 — about even overall. Live speed measured early in a new game. |
 | v5.1 fast planner | Back to the lighter look-ahead (16 future trays; the deeper one wasn't clearly better) with work spread evenly over the CPU cores: planning ~0.03 s per tray. Also handles the blue bevelled theme and size changes between menu and board. Live 87/min was measured over 865 moves (a longer run than v5's 302 early-game moves), median tray 100/min. |
+| v5.3 flash max | Same planner as v5.1. No check screenshot after each tray (the next tray's screenshot confirms the board), learned wait for the game to deal the next tray, 120 ms drags. 100 moves/min over 302 live moves (median tray 1.3 s). Trade-off: its picture of the board can drift without the per-tray check; one game ended earlier than it should have because of that. |
 
 ## How it works
 
@@ -51,7 +52,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-bot.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\stop-bot.ps1
 ```
 
-Options: `--swipe-ms` (drag duration, default 300) and `--pickup-y` (calibration of where a lifted piece appears).
+Experimental versions live in `versions/<name>/` and run with `.\start-bot.ps1 -Version <name>`.
+
+Options: `--swipe-ms` (drag duration, default 120) and `--pickup-y` (calibration of where a lifted piece appears).
 
 ## Testing the planner offline
 
