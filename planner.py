@@ -3,6 +3,11 @@
 Bit (y*8 + x) is board cell (x, y). The planner searches every order and
 position for the pieces in the tray, scores the resulting boards, and looks
 ahead by sampling likely future trays to prefer boards that stay playable.
+
+Combos: the game keeps a combo streak alive while at least one line is cleared
+within every COMBO_WINDOW placements. `since` counts placements since the last
+clear; the planner rewards clears that extend a streak, penalises breaking it,
+and prefers ending a tray with lines ready to clear when the streak is at risk.
 """
 import math
 import random
@@ -105,20 +110,57 @@ def clear_reward(lines):
     return 3.0 * lines * lines
 
 
-def _expand(states, width, evaluate):
-    """One placement step for every state; keep the best `width` distinct ones."""
+COMBO_WINDOW = 3     # placements allowed without a clear before the streak breaks
+COMBO_BONUS = 6.0    # extra reward for a clear that keeps the streak going
+COMBO_BREAK = 10.0   # penalty when a placement breaks the streak
+COMBO_READY = 9.0    # end-of-tray bonus for lines a likely next piece can clear
+
+
+def step_combo(since, lines):
+    """(reward, new since) for one placement. since >= COMBO_WINDOW means no streak."""
+    if lines:
+        return (COMBO_BONUS if since < COMBO_WINDOW else 0.0), 0
+    since += 1
+    return (-COMBO_BREAK if since == COMBO_WINDOW else 0.0), since
+
+
+@lru_cache(maxsize=200000)
+def clear_chance(b):
+    """Probability that a random next piece can complete at least one line."""
+    total = 0.0
+    for p, masks in zip(PROBS, SHAPE_MASKS):
+        for m in masks:
+            if b & m: continue
+            nb = b | m
+            if any(nb & line == line for line in LINES):
+                total += p; break
+    return total
+
+
+def combo_eval(b, since):
+    """End-of-tray combo term: the fewer placements left before the streak breaks,
+    the more a board that can clear soon is worth."""
+    if since >= COMBO_WINDOW: return 0.0
+    return COMBO_READY * (since + 1) / COMBO_WINDOW * clear_chance(b)
+
+
+def _expand(states, width, evaluate, combo=False):
+    """One placement step for every state; keep the best `width` distinct ones.
+    States are (reward, board, moves, remaining pieces, since)."""
     best = {}
-    for reward, b, moves, rem in states:
+    for reward, b, moves, rem, since in states:
         for i, (slot, cells) in enumerate(rem):
             rest = rem[:i] + rem[i + 1:]
             for x, y, m in placements(cells):
                 if b & m: continue
                 nb, n = drop(b, m)
-                r = reward + clear_reward(n)
-                key = (nb, tuple(s for s, _ in rest))
+                r = reward + clear_reward(n); s2 = since
+                if combo:
+                    bonus, s2 = step_combo(since, n); r += bonus
+                key = (nb, tuple(s for s, _ in rest), min(s2, COMBO_WINDOW))
                 old = best.get(key)
                 if old is None or old[0] < r:
-                    best[key] = (r, nb, moves + [(slot, x, y, nb)], rest)
+                    best[key] = (r, nb, moves + [(slot, x, y, nb)], rest, s2)
     out = sorted(best.values(), key=lambda s: s[0] + evaluate(s[1]), reverse=True)
     return out[:width]
 
@@ -127,7 +169,7 @@ def _survival(b, triples):
     """Average outcome of quickly playing sampled future trays from board b."""
     total = 0.0
     for tri in triples:
-        states = [(0.0, b, [], tri)]
+        states = [(0.0, b, [], tri, COMBO_WINDOW)]
         for _ in range(3):
             nxt = _expand(states, 4, fast_eval)
             if not nxt: break
@@ -139,16 +181,19 @@ def _survival(b, triples):
     return total / len(triples)
 
 
-def plan(board, pieces, avoid=frozenset(), width=300, lookahead=16, seed=0, min_filled=12, candidates=10):
+def plan(board, pieces, avoid=frozenset(), width=300, lookahead=16, seed=0, min_filled=12, candidates=10,
+         since=None):
     """Return the best full sequence [(slot, x, y, board_after), ...].
 
     pieces: list of (slot, cells). avoid: first moves (slot, x, y) to skip.
+    since: placements since the last line clear (None = ignore combos).
     Places as many pieces as possible; returns [] if none fit.
     """
     pieces = [(slot, tuple(cells)) for slot, cells in pieces]
-    states = [(0.0, board, [], pieces)]; finished = []
+    combo = since is not None
+    states = [(0.0, board, [], pieces, since if combo else COMBO_WINDOW)]; finished = []
     for depth in range(len(pieces)):
-        nxt = _expand(states, width, fast_eval)
+        nxt = _expand(states, width, fast_eval, combo)
         if depth == 0 and avoid:
             nxt = [s for s in nxt if (s[2][0][0], s[2][0][1], s[2][0][2]) not in avoid]
         if not nxt: break
@@ -157,11 +202,15 @@ def plan(board, pieces, avoid=frozenset(), width=300, lookahead=16, seed=0, min_
     most = max(len(s[2]) for s in finished)
     finished = [s for s in finished if len(s[2]) == most]
     ranked = sorted(finished, key=lambda s: s[0] + fit_eval(s[1]), reverse=True)
+    if combo:
+        # Only the leaders get the (slower) combo term; the rest can't catch up.
+        ranked = sorted(ranked[:40], key=lambda s: s[0] + fit_eval(s[1]) + combo_eval(s[1], s[4]), reverse=True)
     top = ranked[:max(8, candidates)]
     filled = top[0][1].bit_count()
     if lookahead and len(top) > 1 and filled >= min_filled:
         rng = random.Random(seed ^ board)
         triples = [[(i, SHAPES[k]) for i, k in enumerate(rng.choices(range(len(SHAPES)), PROBS, k=3))]
                    for _ in range(lookahead)]
-        top = sorted(top[:candidates], key=lambda s: s[0] + 0.5 * fit_eval(s[1]) + _survival(s[1], triples), reverse=True)
+        top = sorted(top[:candidates], key=lambda s: s[0] + 0.5 * fit_eval(s[1]) + _survival(s[1], triples)
+                     + (combo_eval(s[1], s[4]) if combo else 0.0), reverse=True)
     return [tuple(m) for m in top[0][2]]

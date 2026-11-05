@@ -329,25 +329,35 @@ def main():
     plan_seq=[]; im=None; started=time.time(); stuck_since=None; tray_errors=0
     trusted=None  # board accepted while lines are still clearing on screen
     clears=[]  # (cells, time) of recent line clears, which animate for ~1.5 s
+    since=planner.COMBO_WINDOW  # placements since the last clear (combo streak tracking)
+    carry=None  # tray pieces still to place after an unchecked move
     while turn<args.max_moves:
-        if im is None: im=capture()
-        if not is_board(im):
+        if carry is not None:
+            # Mid-tray: the board is known from the plan, so no screenshot is needed.
+            board,pieces=trusted,carry; carry=None
+            by_slot={p['slot']:p for p in pieces}
+        else:
+            if im is None: im=capture()
+            board=None
+        if board is None and not is_board(im):
             if not args.play: print('Not on the game board.'); return
             unknown_count+=1; plan_seq=[]; im=None; trusted=None; clears=[]
             # Never tap anything until the screen has been unrecognised for a few reads.
             if unknown_count<5: time.sleep(.4); continue
             if unknown_count==5: save_unknown(capture())
             recover_screen(capture(),unknown_count); continue
-        unknown_count=0; board=trusted if trusted is not None else read_board(im)
-        try: pieces=read_pieces(im)
-        except RuntimeError as e:
-            tray_errors+=1
-            if tray_errors==20: save_unknown(im)  # a new theme to calibrate
-            log(str(e),'Waiting for screen to settle.'); time.sleep(.15); im=None; continue
-        tray_errors=0
+        unknown_count=0
+        if board is None:
+            board=trusted if trusted is not None else read_board(im)
+            try: pieces=read_pieces(im)
+            except RuntimeError as e:
+                tray_errors+=1
+                if tray_errors==20: save_unknown(im)  # a new theme to calibrate
+                log(str(e),'Waiting for screen to settle.'); time.sleep(.15); im=None; continue
+            tray_errors=0
+            if not pieces: log('Waiting for pieces or game-over screen.'); time.sleep(.3); im=None; plan_seq=[]; continue
+            by_slot={p['slot']:p for p in pieces}
         if board!=failed_board: failed_board=board; failed_moves.clear()
-        if not pieces: log('Waiting for pieces or game-over screen.'); time.sleep(.3); im=None; plan_seq=[]; continue
-        by_slot={p['slot']:p for p in pieces}
         # Keep following the tray's plan while the board matches it; otherwise re-plan.
         following=(plan_seq and plan_seq[0][0] in by_slot and plan_seq[0][4]==board
                    and plan_seq[0][5]==tuple(by_slot[plan_seq[0][0]]['cells']))
@@ -361,7 +371,7 @@ def main():
             if not same: im=im2; continue
             pieces=read_pieces(im2); by_slot={p['slot']:p for p in pieces}
             t=time.time()
-            seq=planner.plan(board,[(p['slot'],p['cells']) for p in pieces],failed_moves,seed=turn)
+            seq=planner.plan(board,[(p['slot'],p['cells']) for p in pieces],failed_moves,seed=turn,since=since)
             plan_seq=[]; prev=board
             for slot,x,y,nb in seq: plan_seq.append((slot,x,y,nb,prev,tuple(by_slot[slot]['cells']))); prev=nb
             log(f'Planned {len(seq)} of {len(pieces)} pieces in {time.time()-t:.2f}s')
@@ -391,6 +401,15 @@ def main():
         dx=sx+(target_x-tray_center_x)/GAIN+adjust_x
         dy=sy+(target_y-args.pickup_y)/GAIN+adjust_y
         placed=sum(1<<((y+b)*8+x+a) for a,b in p['cells'])
+        cleared=(board|placed)&~expected
+        if plan_seq:
+            # More pieces of this tray follow: swipe now and check the whole tray after
+            # its last piece. A miss shows up there and the bot re-reads and re-plans.
+            t0=time.time(); drag_piece(sx,sy,dx,dy,args.swipe_ms)
+            if cleared: clears.append((cleared,t0))
+            since=0 if cleared else since+1
+            trusted=expected; carry=[q for q in pieces if q['slot']!=slot]
+            log(f'swipe {time.time()-t0:.2f}s, checked after the tray'); continue
         actual=board
         for retry_x,retry_y in [(0,0),(0,RETRY),(0,-RETRY),(RETRY,0),(-RETRY,0)]:
             # Each retry shifts the piece by one cell; never shift it off the board.
@@ -402,12 +421,13 @@ def main():
             clears=[(m,t) for m,t in clears if t>t0-2.5]
             t1=time.time(); im,actual,early=settle(board,expected,placed,sum(m for m,_ in clears))
             trusted=actual if early else None
-            if actual==expected and (board|placed)&~expected: clears.append(((board|placed)&~expected,t1))
+            if actual==expected and cleared: clears.append((cleared,t1))
             log(f'swipe {t1-t0:.2f}s, check {time.time()-t1:.2f}s',''.join(TRACE)+(' (lines still clearing)' if early else '')); TRACE.clear()
             if actual is None: log('Screen changed; checking state.'); break
             if actual!=board: break
             log('Retrying unplaced piece.')
-        if actual is None: im=None; plan_seq=[]; continue
+        if actual is None: im=None; plan_seq=[]; trusted=None; continue
+        if actual==expected: since=0 if cleared else since+1
         if actual==board:
             failed_moves.add((slot,x,y)); plan_seq=[]
             log('Placement failed; trying a different move.'); continue

@@ -5,6 +5,7 @@ Plays Block Blast (Classic) on a USB-connected Android tablet (2880x1800 landsca
 ## Files
 - `bot.py` — screen reading, recovery from menus/ads/game-over, drag aiming, main loop. `python bot.py` = dry run (reads the screen, no input); `--play` plays.
 - `planner.py` — bitboard planner (bit `y*8+x` = cell). Searches every order/position of the tray, scores boards (`fast_eval`, `fit_eval`), and samples future trays (`_survival`) when the board fills up.
+- `bench.py` — benchmarks every planner version straight from git history on the same simulated games and draws `benchmark.jpg` (in the README). `python bench.py 24 300 --procs=5` (~15 min; keep procs low while the bot is live).
 - `sim.py` — offline benchmark: `python sim.py [games] [max_moves]` (`--light` older lighter look-ahead, `--old` the legacy `bot.choose`). Use it to check planner changes before going live.
 - `start-bot.ps1` / `stop-bot.ps1` — run detached; output in `bot.log`, errors in `bot-error.log`, PID in `bot.pid`.
 
@@ -16,6 +17,8 @@ Plays Block Blast (Classic) on a USB-connected Android tablet (2880x1800 landsca
 - If "no legal moves" lasts 30 s without a result screen, the screen is misread: it is saved and normal recovery runs. Any exception is logged and the loop restarts after `adb wait-for-device`.
 - New tray pieces animate in; the bot only plans from two consecutive screenshots that agree.
 - All coordinates assume the game fills the full 1800 px height. With the tablet's 3-button navigation bar on, the app gets 1682 px and the game shrinks around x=1440; `update_layout` reads `mAppBounds` from `dumpsys window displays` (at startup and on recovery), `capture` scales screenshots back, and `tap`/`drag_piece` scale input with `to_screen`.
+- Pieces of one tray are swiped back to back (`carry`); only the tray's last piece is checked with `settle`. A miss earlier in the tray shows up there and triggers a re-read and re-plan.
+- Combos: `since` counts placements since the last clear and is passed to `planner.plan`; the streak breaks after 3 placements without a clear (`COMBO_WINDOW`). Combo pop-up text briefly hides the board (`-` in the trace).
 - Line clears animate for ~1.5 s. `settle` accepts a move once everything outside the clearing lines matches (`early`), and the main loop plays on from that expected board (`trusted`), ignoring recently cleared cells (`clears`) in the next checks. Each move logs `swipe Xs, check Ys` plus a trace of the reads (E expected, B unchanged, o other, - off-board).
 - Fast capture: `screencap | gzip -1` raw (≈0.35 s) with PNG fallback (≈0.75 s). screencap occasionally hangs on the tablet; each attempt has a 4–6 s timeout (the process is killed) and is retried, so a hang costs seconds, not the old 27 s freeze.
 
@@ -23,8 +26,9 @@ Plays Block Blast (Classic) on a USB-connected Android tablet (2880x1800 landsca
 - `adbwifi.py` picks USB if plugged in, else wireless debugging (one-time `python adbwifi.py pair`). The bot waits for the tablet to come back after errors (e.g. flat battery). Screenshot timeouts are 3x longer over Wi-Fi (`SLOW`). Shared copy of `../arrows bot/adbwifi.py`; keep in sync.
 
 ## Working on it
+- **Every new version must update the benchmark**: add it to `VERSIONS` in `bench.py` (label + commit; the working tree is `None` until committed, then pin the commit), put its measured live moves/min (from `bot.log`, 100+ moves) in `LIVE_SPEED`, rerun `python bench.py`, add a row to the README's version table, and commit `benchmark.jpg` and `bench-results.json` with the change.
 - The game is often live: don't stop a running bot unless the user says so. Code changes only take effect after a restart.
 - Run live tests detached (`start-bot.ps1`); a foreground run dies when the tool call is interrupted.
 - Unrecognised screens are saved to `unknown-screens/` for calibration.
 - Public repo (GPL v3). Never commit screenshots (`*.png` is ignored; they can show personal info), logs, or `unknown-screens/`.
-- Commit only the files you changed; don't push unless asked.
+- Commit only the files you changed, and always push after committing ("commit" means commit and push).

@@ -1,0 +1,46 @@
+{
+ "v1 original": {
+  "games": 24,
+  "cap": 300,
+  "moves": 254.0,
+  "reached_cap": 16,
+  "lines_per_100": 48.21194225721785,
+  "best_streak": 24.958333333333332,
+  "mean_streak": 9.204081632653061,
+  "live_moves_per_min": null,
+  "commit": "cd316c3"
+ },
+ "v2 bitboard planner": {
+  "games": 24,
+  "cap": 300,
+  "moves": 283.625,
+  "reached_cap": 21,
+  "lines_per_100": 48.714558542676656,
+  "best_streak": 15.75,
+  "mean_streak": 5.217564870259481,
+  "live_moves_per_min": null,
+  "commit": "9ed7b94"
+ },
+ "v3 look-ahead": {
+  "games": 24,
+  "cap": 300,
+  "moves": 271.5,
+  "reached_cap": 19,
+  "lines_per_100": 48.64947820748926,
+  "best_streak": 14.458333333333334,
+  "mean_streak": 4.879377431906615,
+  "live_moves_per_min": 29,
+  "commit": "0347688"
+ },
+ "v4 combos": {
+  "games": 24,
+  "cap": 300,
+  "moves": 298.7083333333333,
+  "reached_cap": 23,
+  "lines_per_100": 48.50048821313991,
+  "best_streak": 45.375,
+  "mean_streak": 14.41255605381166,
+  "live_moves_per_min": 50,
+  "commit": null
+ }
+}
