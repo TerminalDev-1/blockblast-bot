@@ -232,6 +232,17 @@ def _slot_piece(im,slot,threshold,background):
     if not cells or len(cells)>9: return 'bad'
     return {'slot':slot,'cells':cells,'origin':(left+x0,1320+y0)}
 
+REST_Y=1479; REST_DX=(4,-1,-5)  # where settled tray pieces are centred (measured)
+
+def at_rest(p):
+    """Is this tray piece at its resting spot (not sliding in)?"""
+    w=max(a for a,b in p['cells'])+1; h=max(b for a,b in p['cells'])+1
+    left,right=TRAYS[p['slot']]
+    dx=p['origin'][0]+w*25-(left+right)/2; cy=p['origin'][1]+h*25
+    return abs(cy-REST_Y)<=6 and abs(dx-REST_DX[p['slot']])<=6
+
+KNOWN_SHAPES=set(planner.SHAPES)
+
 def read_pieces(im):
     pieces=[]
     for slot,(left,right) in enumerate(TRAYS):
@@ -243,11 +254,16 @@ def read_pieces(im):
         background=np.median(strip.reshape(-1,3),axis=0)
         noise=float(np.percentile(np.linalg.norm(strip-background,axis=2),99))
         adaptive=min(45.0,max(18.0,noise*1.6+6))
-        result='bad'
-        for threshold in (adaptive,45,30,24,60,18,80):
+        # Wood grain can add cells at a low threshold, giving a shape the game doesn't
+        # have; keep trying until a real piece shape comes out (else the first reading).
+        result='bad'; fallback='bad'
+        for threshold in (adaptive,45,30,24,60,18,80,100,120):
             if threshold<noise*1.2: continue
-            result=_slot_piece(im,slot,threshold,background)
-            if result!='bad': break
+            r=_slot_piece(im,slot,threshold,background)
+            if r=='bad': continue
+            if r is None or planner.normalize(r['cells']) in KNOWN_SHAPES: result=r; break
+            if fallback=='bad': fallback=r
+        if result=='bad': result=fallback
         if result=='bad': raise RuntimeError(f'Unrecognized piece in tray {slot+1}.')
         if result: pieces.append(result)
     return pieces
@@ -379,6 +395,7 @@ def main():
     since=planner.COMBO_WINDOW  # placements since the last clear (combo streak tracking)
     carry=None  # tray pieces still to place after an unchecked move
     pieces_known=False
+    predicted=None  # board the last checked move should have produced
     while turn<args.max_moves:
         if carry is not None:
             # Mid-tray: the board is known from the plan, so no screenshot is needed.
@@ -395,7 +412,7 @@ def main():
                 else: trusted=None
         if board is None and not is_board(im):
             if not args.play: print('Not on the game board.'); return
-            unknown_count+=1; plan_seq=[]; im=None; trusted=None; clears=[]
+            unknown_count+=1; plan_seq=[]; im=None; trusted=None; clears=[]; predicted=None
             # Never tap anything until the screen has been unrecognised for a few reads.
             if unknown_count<5: time.sleep(.1); continue
             if unknown_count==5: save_unknown(capture())
@@ -420,15 +437,18 @@ def main():
         following=(plan_seq and plan_seq[0][0] in by_slot and plan_seq[0][4]==board
                    and plan_seq[0][5]==tuple(by_slot[plan_seq[0][0]]['cells']))
         if not following:
-            # New tray pieces animate in and can be misread mid-animation;
-            # plan only from two consecutive screenshots that agree.
-            im2=capture()
-            res=sum(m for m,t in clears if t>time.time()-2.5)
-            try: same=((shows(im2,board,res) if trusted is not None else is_board(im2) and read_board(im2)==board) and
-                       [(p['slot'],p['cells']) for p in read_pieces(im2)]==[(p['slot'],p['cells']) for p in pieces])
-            except RuntimeError: same=False
-            if not same: im=im2; continue
-            pieces=read_pieces(im2); by_slot={p['slot']:p for p in pieces}
+            # New tray pieces animate in and can be misread mid-animation. Mid-animation
+            # pieces are unreadable or off their resting spot, so a full tray of three
+            # pieces at rest on the board the last move predicted is safe to plan from
+            # at once; anything else needs a second screenshot that agrees.
+            if not (len(pieces)==3 and all(at_rest(p) for p in pieces) and board==predicted):
+                im2=capture()
+                res=sum(m for m,t in clears if t>time.time()-2.5)
+                try: same=((shows(im2,board,res) if trusted is not None else is_board(im2) and read_board(im2)==board) and
+                           [(p['slot'],p['cells']) for p in read_pieces(im2)]==[(p['slot'],p['cells']) for p in pieces])
+                except RuntimeError: same=False
+                if not same: im=im2; continue
+                pieces=read_pieces(im2); by_slot={p['slot']:p for p in pieces}
             t=time.time()
             seq=planner.plan(board,[(p['slot'],p['cells']) for p in pieces],failed_moves,seed=turn,since=since)
             plan_seq=[]; prev=board
@@ -486,6 +506,7 @@ def main():
             if actual!=board: break
             log('Retrying unplaced piece.')
         if actual is None: im=None; plan_seq=[]; trusted=None; continue
+        predicted=expected if actual==expected else None
         if actual==expected: since=0 if cleared else since+1
         if actual==board:
             failed_moves.add((slot,x,y)); plan_seq=[]
