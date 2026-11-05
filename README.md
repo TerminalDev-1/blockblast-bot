@@ -18,6 +18,7 @@ Every planner version plays the same simulated games (`python bench.py`); live s
 | v3.1 line-clear skip | Doesn't wait for line-clear animations; works with the navigation bar shown. |
 | v4 combos | Keeps combo streaks alive; swipes a whole tray and checks the board once per tray. |
 | v4.1 faster checks | Reads the board through combo pop-up text, no fixed waits, one long-lived adb shell for swipes (same planner as v4). |
+| v4.2 fast drags | 150 ms drags, new trays planned from one screenshot, wood-theme tray fix. Measured late in a ~400k game, where planning and line clears take longer, so it isn't directly comparable with v4.1's early-game 67. |
 
 ## How it works
 
