@@ -100,8 +100,13 @@ static void recover_screen(const Image& im) {
     }
     double old = SCALE; update_layout();
     if (SCALE != old) return;  // the navigation bar changed; re-read with the new scale
-    if (play_button(im)) { say("Result screen: starting next attempt against the current best."); tap(1440, 1335); sleep_s(5); return; }
-    if (green_button(im)) { say("Starting or restarting Classic."); tap(1440, 1370); sleep_s(4); return; }
+    // The bot never starts a game itself (the user's choice): on the result screen or the
+    // menu it waits until the user starts one, then plays it.
+    if (play_button(im) || green_button(im)) {
+        static double said = -1e9;
+        if (now() - said > 60) { say(std::string(play_button(im) ? "Game over" : "Main menu") + ": waiting for you to start a game."); said = now(); }
+        sleep_s(3); return;
+    }
     if (rating_popup(im)) { say("Closing rating prompt."); tap(1778, 525); sleep_s(2); return; }
     if (close_accessible_ad()) { sleep_s(3); return; }
     say("Unknown screen: waiting to preserve the current game."); sleep_s(10);
