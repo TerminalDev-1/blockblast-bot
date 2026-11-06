@@ -18,8 +18,9 @@ built or tested. Queued checkpoints are done **in version order, lowest number f
 - Mainline releases continue (the user is **not** abandoning released main bots), but **less often** than so far.
 - The user may also produce more **experimental checkpoints that are variations of the bot**. They can be
   based on **v5.8-mach1, v5.7-speedbreaker or v5.6-hyperspeed**; the user **recommends v5.8-mach1** as the
-  default base, and the older two are there for variety (to test how a variation would have turned out on them): anything goes, e.g. a slower or faster play loop, a slower (deeper) or
-  faster planner.
+  default base, and the older two are there for variety (to test how a variation would have turned out on them).
+  **What each experiment changes is entirely the user's call.** There are no preset kinds (not "speed",
+  "planning" or "intelligence" variants) unless the user asks for one; Claude doesn't assume any.
 - **Each experimental checkpoint goes in its own folder (`versions/<name>-exp/`) and carries the
   experimental label** (`-exp` in the name, "(experimental)" with date and time in the benchmark).
 
