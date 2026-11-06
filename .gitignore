@@ -13,3 +13,5 @@ latest.png
 unknown-screens/
 *.png
 bot_next.py
+versions/*/build/
+debug-frames/

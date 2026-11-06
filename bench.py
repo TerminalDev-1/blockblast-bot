@@ -20,7 +20,8 @@ import planner as current
 
 # (label, commit or None for the working tree, kind)
 #   'choose' = the original one-move-at-a-time bot.choose; 'plan' = planner.plan;
-#   'combo' = planner.plan with combo tracking.
+#   'combo' = planner.plan with combo tracking; 'cpp' = a C++ planner (CPP_SRC below),
+#   built from that commit with g++ into a DLL.
 VERSIONS = [
     ('v1 original', 'cd316c3', 'choose'),
     ('v2 bitboard planner', '9ed7b94', 'plan'),
@@ -29,7 +30,10 @@ VERSIONS = [
     ('v5 deeper look-ahead', '698ad26', 'combo'),
     ('v5.1 fast planner', 'f16d74a', 'combo'),
     ('v5.4 highspeed max', '85fa355', 'combo'),
+    ('v5.5 cpp max', None, 'cpp'),
 ]
+# Where each C++ version's planner source lives in its commit.
+CPP_SRC = {'v5.5 cpp max': 'versions/v5.5-cpp-max/src'}
 # Measured on the tablet (moves/min from bot.log over 100+ moves). None = not measured.
 LIVE_SPEED = {'v1 original': None, 'v2 bitboard planner': None, 'v3 look-ahead': 29,
               'v3.1 line-clear skip': 39, 'v4 combos': 50,
@@ -37,7 +41,7 @@ LIVE_SPEED = {'v1 original': None, 'v2 bitboard planner': None, 'v3 look-ahead':
               'v5 deeper look-ahead': 94, 'v5.1 fast planner': 87,
               'v5.3 flash max': 100,
               'v5.3.1 flash highspeed max': 122,
-              'v5.4 highspeed max': 100}
+              'v5.4 highspeed max': 100, 'v5.5 cpp max': None}
 
 WINDOW = current.COMBO_WINDOW
 
@@ -45,7 +49,52 @@ WINDOW = current.COMBO_WINDOW
 _loaded = {}
 
 
-def load(commit, kind):
+def cpp_dll(label, commit):
+    """Path of the planner DLL for a C++ version, built from that commit's source."""
+    src = CPP_SRC[label]
+    out = os.path.join(tempfile.gettempdir(), f'bbplan_{commit or "worktree"}.dll')
+    # Committed sources never change; the working tree is built once per run by the main
+    # process (BB_DLL_READY), and the worker processes reuse it.
+    if os.path.exists(out) and (commit or os.environ.get('BB_DLL_READY')): return out
+    files = ['planner.hpp', 'planner.cpp', 'capi.cpp']
+    tmp = tempfile.mkdtemp(prefix='bbplan_')
+    for f in files:
+        data = (open(os.path.join(src, f), 'rb').read() if commit is None else
+                subprocess.run(['git', 'show', f'{commit}:{src}/{f}'], check=True, stdout=subprocess.PIPE).stdout)
+        open(os.path.join(tmp, f), 'wb').write(data)
+    gpp = 'g++'
+    if not any(os.path.exists(os.path.join(d, 'g++.exe')) for d in os.environ.get('PATH', '').split(os.pathsep)):
+        import glob
+        found = glob.glob(os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Microsoft', 'WinGet', 'Packages', '*', 'mingw64', 'bin', 'g++.exe'))
+        if found: gpp = found[0]
+    subprocess.run([gpp, '-O2', '-mpopcnt', '-std=c++20', '-static', '-shared', '-o', out,
+                    os.path.join(tmp, 'capi.cpp'), os.path.join(tmp, 'planner.cpp')], check=True)
+    return out
+
+
+class CppPlanner:
+    """planner.plan-like wrapper around bb_plan in a C++ planner DLL."""
+    def __init__(self, path):
+        import ctypes
+        self.lib = ctypes.CDLL(path); self.c = ctypes
+        u64 = ctypes.c_ulonglong; ip = ctypes.POINTER(ctypes.c_int)
+        self.lib.bb_plan.argtypes = [u64, ctypes.c_int, ip, ip, ip, ctypes.c_int, u64, ip, ctypes.POINTER(u64)]
+        self.lib.bb_plan.restype = ctypes.c_int
+
+    def plan(self, board, tray, seed=0, since=None):
+        c = self.c; n = len(tray)
+        slots = (c.c_int * n)(*[s for s, _ in tray]); counts = (c.c_int * n)(*[len(cells) for _, cells in tray])
+        xy = [v for _, cells in tray for cell in cells for v in cell]
+        xy = (c.c_int * len(xy))(*xy); out = (c.c_int * 12)(); after = (c.c_ulonglong * 4)()
+        k = self.lib.bb_plan(board, n, slots, counts, xy, WINDOW if since is None else since, seed, out, after)
+        return [(out[3 * i], out[3 * i + 1], out[3 * i + 2], after[i]) for i in range(k)]
+
+
+def load(commit, kind, label=None):
+    if kind == 'cpp':
+        key = ('cpp', commit)
+        if key not in _loaded: _loaded[key] = CppPlanner(cpp_dll(label, commit))
+        return _loaded[key]
     if commit is None:
         return current
     if commit not in _loaded:
@@ -68,7 +117,7 @@ def play(job):
     """One game. Returns moves, lines, and the length of every combo streak."""
     import random
     label, commit, kind, seed, cap = job
-    mod = load(commit, kind)
+    mod = load(commit, kind, label)
     rng = random.Random(seed); board = 0; moves = 0; lines = 0
     since = WINDOW; streak = 0; streaks = []
 
@@ -92,7 +141,7 @@ def play(job):
                 slot = m[0]['slot']; placed(dict(tray)[slot], m[1], m[2], m[3])
                 tray = [t for t in tray if t[0] != slot]
             else:
-                extra = {'since': since} if kind == 'combo' else {}
+                extra = {'since': since} if kind in ('combo', 'cpp') else {}
                 seq = mod.plan(board, tray, seed=seed + moves, **extra)
                 if not seq: tray = None; break
                 for slot, x, y, nb in seq:
@@ -169,6 +218,9 @@ if __name__ == '__main__':
              if commit and '--all' not in sys.argv and label in saved
              and saved[label].get('commit') == commit and saved[label]['games'] == games and saved[label]['cap'] == cap}
     todo = [v for v in VERSIONS if v[0] not in reuse]
+    for label, commit, kind in todo:
+        if kind == 'cpp': cpp_dll(label, commit)  # build once, before the worker processes
+    os.environ['BB_DLL_READY'] = '1'
     if reuse: print('Reusing saved results for:', ', '.join(reuse))
     jobs = [(label, commit, kind, 5000 + g, cap) for label, commit, kind in todo for g in range(games)]
     t = time.time()
