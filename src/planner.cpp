@@ -141,9 +141,9 @@ static double clear_chance(u64 b) {
     return total;
 }
 
-static double combo_eval(u64 b, int since) {
+static double combo_eval(u64 b, int since, double scale) {
     if (since >= COMBO_WINDOW) return 0;
-    return COMBO_READY * (since + 1) / COMBO_WINDOW * clear_chance(b);
+    return scale * COMBO_READY * (since + 1) / COMBO_WINDOW * clear_chance(b);
 }
 
 // ---- beam search over one tray ----
@@ -160,7 +160,7 @@ struct State {
 // this step runs thousands of times per plan.
 template <bool Track, class Eval>
 static void expand(const std::vector<State>& states, const std::vector<PieceMasks>& pieces,
-                   size_t width, Eval evaluate, bool combo, std::vector<State>& out) {
+                   size_t width, Eval evaluate, bool combo, std::vector<State>& out, double cs = 1.0) {
     thread_local std::vector<State> cand;
     thread_local std::vector<int> table;
     thread_local std::vector<std::pair<double, int>> scored;
@@ -180,8 +180,8 @@ static void expand(const std::vector<State>& states, const std::vector<PieceMask
                 auto [nb, n] = drop(st.board, m);
                 double r = st.reward + clear_reward(n); int s2 = st.since;
                 if (combo) {
-                    if (n) { if (st.since < COMBO_WINDOW) r += COMBO_BONUS; s2 = 0; }
-                    else { s2 = st.since + 1; if (s2 == COMBO_WINDOW) r -= COMBO_BREAK; }
+                    if (n) { if (st.since < COMBO_WINDOW) r += cs * COMBO_BONUS; s2 = 0; }
+                    else { s2 = st.since + 1; if (s2 == COMBO_WINDOW) r -= cs * COMBO_BREAK; }
                 }
                 int sk = std::min(s2, COMBO_WINDOW);
                 size_t h = (nb * 0x9E3779B97F4A7C15ULL ^ (rem * 31 + sk) * 0xBF58476D1CE4E5B9ULL) >> 7 & (cap - 1);
@@ -239,30 +239,35 @@ static void run_on_pool(const std::function<void()>& job, int nthreads) {
     lock.lock(); done.wait(lock, [] { return running == 0; });
 }
 
-// Average outcome of quickly playing sampled future trays from board b.
-static double survival(u64 b, const std::vector<std::vector<int>>& trays, size_t from, size_t to,
-                       int since, const Params& p) {
+// Outcome of quickly playing each sampled future tray [from, to) from board b, into out[].
+// depth 2 plays a second sampled tray after the first (crowded boards).
+static void survival(u64 b, const std::vector<std::vector<int>>& trays, const std::vector<std::vector<int>>& trays2,
+                     size_t from, size_t to, int since, const Params& p, int depth, double* out) {
     const auto& all = shapes();
     bool combo = p.look_combo && since < COMBO_WINDOW;
-    double total = 0;
     std::vector<PieceMasks> pieces(3);
     std::vector<State> states, nxt;
     for (size_t t = from; t < to; t++) {
-        for (int i = 0; i < 3; i++) pieces[i] = {i, &all[trays[t][i]].masks, &all[trays[t][i]].xy};
         states.assign(1, State{0.0, b, combo ? since : COMBO_WINDOW, 7, 0, {}});
-        for (int d = 0; d < 3; d++) {
-            expand<false>(states, pieces, p.look_width, fast_eval, combo, nxt);
-            if (nxt.empty()) break;
-            std::swap(states, nxt);
+        double value = 0; bool dead = false;
+        for (int tray = 0; tray < depth && !dead; tray++) {
+            const auto& tr = tray == 0 ? trays[t] : trays2[t];
+            for (int i = 0; i < 3; i++) pieces[i] = {i, &all[tr[i]].masks, &all[tr[i]].xy};
+            for (auto& st : states) st.rem = 7;
+            for (int d = 0; d < 3; d++) {
+                expand<false>(states, pieces, p.look_width, fast_eval, combo, nxt, p.combo_scale);
+                if (nxt.empty()) break;
+                std::swap(states, nxt);
+            }
+            // Pieces left: likely game over (a failure in the second tray is less certain).
+            if (states[0].rem) { value = -(tray == 0 ? 1.0 : 0.5) * p.gameover_penalty * pc(states[0].rem); dead = true; }
         }
-        if (states[0].rem) total -= 150.0 * pc(states[0].rem);  // pieces left: likely game over
-        else {
-            double best = -1e18;
-            for (const auto& s : states) best = std::max(best, s.reward + fast_eval(s.board));
-            total += best;
+        if (!dead) {
+            value = -1e18;
+            for (const auto& st : states) value = std::max(value, st.reward + fast_eval(st.board));
         }
+        out[t] = value;
     }
-    return total;
 }
 
 std::vector<Move> plan(u64 board, const std::vector<Piece>& in, const Params& p,
@@ -276,7 +281,7 @@ std::vector<Move> plan(u64 board, const std::vector<Piece>& in, const Params& p,
     std::vector<State> finished;
     for (size_t depth = 0; depth < pieces.size(); depth++) {
         std::vector<State> nxt;
-        expand<true>(states, pieces, p.width, fast_eval, combo, nxt);
+        expand<true>(states, pieces, p.width, fast_eval, combo, nxt, p.combo_scale);
         if (depth == 0 && !avoid.empty())
             nxt.erase(std::remove_if(nxt.begin(), nxt.end(), [&](const State& s) {
                 return std::find(avoid.begin(), avoid.end(), std::make_tuple(s.moves[0].slot, s.moves[0].x, s.moves[0].y)) != avoid.end();
@@ -292,12 +297,13 @@ std::vector<Move> plan(u64 board, const std::vector<Piece>& in, const Params& p,
     std::stable_sort(ranked.begin(), ranked.end(), [](auto& a, auto& b) { return a.first > b.first; });
     if (combo) {  // only the leaders get the (slower) combo term
         if (ranked.size() > 40) ranked.resize(40);
-        for (auto& [score, s] : ranked) score += combo_eval(s.board, s.since);
+        for (auto& [score, s] : ranked) score += combo_eval(s.board, s.since, p.combo_scale);
         std::stable_sort(ranked.begin(), ranked.end(), [](auto& a, auto& b) { return a.first > b.first; });
     }
     int filled = pc(ranked[0].second.board);
     int lookahead = p.lookahead, candidates = p.candidates;
-    if (filled >= p.danger_from) { lookahead = std::max(lookahead, p.danger_lookahead); candidates = std::max(candidates, p.danger_candidates); }
+    int depth = 1;
+    if (filled >= p.danger_from) { lookahead = std::max(lookahead, p.danger_lookahead); candidates = std::max(candidates, p.danger_candidates); depth = p.danger_depth; }
     if (lookahead > 0 && ranked.size() > 1 && filled >= p.min_filled) {
         if ((int)ranked.size() > candidates) ranked.resize(candidates);
         std::mt19937_64 rng(seed ^ board);
@@ -306,26 +312,38 @@ std::vector<Move> plan(u64 board, const std::vector<Piece>& in, const Params& p,
         std::discrete_distribution<int> pick(probs.begin(), probs.end());
         std::vector<std::vector<int>> trays(lookahead, std::vector<int>(3));
         for (auto& t : trays) for (auto& k : t) k = pick(rng);
+        std::vector<std::vector<int>> trays2(depth > 1 ? lookahead : 0, std::vector<int>(3));
+        for (auto& t : trays2) for (auto& k : t) k = pick(rng);
         // Jobs: (candidate, chunk of future trays), shared by the threads.
         const size_t chunk = 4, nchunks = (trays.size() + chunk - 1) / chunk;
-        std::vector<double> parts(ranked.size() * nchunks, 0.0);
+        const size_t n = trays.size();
+        std::vector<double> values(ranked.size() * n, 0.0);
         std::atomic<size_t> next{0};
+        const size_t jobs = ranked.size() * nchunks;
         auto work = [&] {
-            for (size_t j; (j = next++) < parts.size();) {
-                const State& s = ranked[j / nchunks].second; size_t c = j % nchunks;
-                parts[j] = survival(s.board, trays, c * chunk, std::min(trays.size(), (c + 1) * chunk),
-                                    combo ? s.since : COMBO_WINDOW, p);
+            for (size_t j; (j = next++) < jobs;) {
+                size_t i = j / nchunks, c = j % nchunks;
+                const State& s = ranked[i].second;
+                survival(s.board, trays, trays2, c * chunk, std::min(n, (c + 1) * chunk),
+                         combo ? s.since : COMBO_WINDOW, p, depth, &values[i * n]);
             }
         };
         int nthreads = p.threads > 0 ? p.threads : std::max(1u, std::thread::hardware_concurrency() - 1);
-        nthreads = (int)std::min<size_t>(nthreads, parts.size());
+        nthreads = (int)std::min<size_t>(nthreads, jobs);
         if (nthreads <= 1) work();
         else run_on_pool(work, nthreads);
         for (size_t i = 0; i < ranked.size(); i++) {
             const State& s = ranked[i].second;
-            double future = 0; for (size_t c = 0; c < nchunks; c++) future += parts[i * nchunks + c];
-            future /= trays.size();
-            ranked[i].first = s.reward + p.fit_weight * fit_eval(s.board) + future + (combo ? combo_eval(s.board, s.since) : 0.0);
+            std::vector<double> v(values.begin() + i * n, values.begin() + (i + 1) * n);
+            double mean = 0; for (double x : v) mean += x; mean /= n;
+            double future = mean;
+            if (p.tail > 0) {  // risk aversion: the worst quarter of futures counts extra
+                size_t q = std::max<size_t>(1, n / 4);
+                std::partial_sort(v.begin(), v.begin() + q, v.end());
+                double worst = 0; for (size_t k = 0; k < q; k++) worst += v[k]; worst /= q;
+                future = (1 - p.tail) * mean + p.tail * worst;
+            }
+            ranked[i].first = s.reward + p.fit_weight * fit_eval(s.board) + future + (combo ? combo_eval(s.board, s.since, p.combo_scale) : 0.0);
         }
         std::stable_sort(ranked.begin(), ranked.end(), [](auto& a, auto& b) { return a.first > b.first; });
     }

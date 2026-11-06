@@ -22,12 +22,19 @@ struct Params {
     int lookahead = 64;         // future trays sampled for each candidate
     int candidates = 16;        // best plans that get the look-ahead
     int min_filled = 0;         // look-ahead once the board has this many blocks
-    int danger_from = 28;       // a crowded board (games are lost there) gets more look-ahead
+    int danger_from = 24;       // a crowded board (games are lost there) gets more look-ahead (v5.5: 28)
     int danger_lookahead = 96;
     int danger_candidates = 20;
     int look_width = 8;         // beam width inside the look-ahead
     bool look_combo = true;     // play future trays keeping the combo streak alive
     double fit_weight = 1.0;    // weight of the board score next to the look-ahead
+    // v5.5.1-exp survival knobs. Tuned with sim.exe on 64 games up to 3000 moves, twice
+    // (seeds 20000 and 30000): v5.5's settings reached 3000 moves in 29 of 128 games,
+    // these in 54 (average 1992 moves vs 1616), with longer combo streaks too.
+    double gameover_penalty = 150;  // per piece that doesn't fit in a sampled future
+    double combo_scale = 1.0;       // weight of combo bonuses/penalties against safety
+    double tail = 0.7;              // weight of the worst quarter of futures (v5.5: 0, plain average)
+    int danger_depth = 2;           // future trays played per sample when the board is crowded (v5.5: 1)
     int threads = 0;            // look-ahead threads (0 = all cores but one)
 };
 

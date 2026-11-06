@@ -58,7 +58,8 @@ static bool set_param(Params& p, const std::string& kv) {
     else if (k == "candidates") p.candidates = (int)v; else if (k == "min_filled") p.min_filled = (int)v;
     else if (k == "danger_from") p.danger_from = (int)v; else if (k == "danger_lookahead") p.danger_lookahead = (int)v;
     else if (k == "danger_candidates") p.danger_candidates = (int)v; else if (k == "look_width") p.look_width = (int)v;
-    else if (k == "look_combo") p.look_combo = v != 0; else if (k == "threads") p.threads = (int)v; else if (k == "fit_weight") p.fit_weight = v;
+    else if (k == "look_combo") p.look_combo = v != 0; else if (k == "threads") p.threads = (int)v; else if (k == "gameover_penalty") p.gameover_penalty = v;
+    else if (k == "combo_scale") p.combo_scale = v; else if (k == "tail") p.tail = v; else if (k == "danger_depth") p.danger_depth = (int)v; else if (k == "fit_weight") p.fit_weight = v;
     else return false;
     return true;
 }
@@ -78,6 +79,7 @@ int main(int argc, char** argv) {
     // Games in parallel with a single-threaded planner; with threads=0 (the bot's setting)
     // one game at a time, the planner using all cores.
     int n = p.threads == 1 ? std::max(1u, std::thread::hardware_concurrency() - 1) : 1;
+    if (const char* procs = getenv("SIM_PROCS")) n = std::max(1, atoi(procs));  // leave cores for a live bot
     for (int t = 0; t < n; t++) ts.emplace_back([&] { for (int g; (g = next++) < games;) rs[g] = play(seed0 + g, cap, p); });
     for (auto& t : ts) t.join();
     double moves = 0, lines = 0, streak = 0, plan_s = 0, worst = 0; int trays = 0, capped = 0;

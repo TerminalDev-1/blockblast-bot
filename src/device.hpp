@@ -38,6 +38,7 @@ void tap(double x, double y);
 // Tablet helper control (started by ensure_helper; failures fall back to screencap/input).
 bool helper_ok();
 void helper_restart();
+void release_touch();  // ends a touch the game may still think is down
 extern int GAP_MS;   // pause between one helper drag's lift and the next drag
 extern int HOLD_MS;  // finger rest on the target before lifting
 std::string helper_dex_path();  // defined by the program (next to its executable)

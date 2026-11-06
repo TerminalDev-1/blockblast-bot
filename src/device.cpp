@@ -16,7 +16,7 @@ namespace bb {
 
 double SCALE = 1.0;
 int SHOTS = 0;
-int GAP_MS = 40;
+int GAP_MS = 30;
 int HOLD_MS = 0;
 static std::string SERIAL;
 static double SLOW = 1;  // timeouts are stretched over Wi-Fi
@@ -257,12 +257,21 @@ static bool helper_start() {
         set_timeout(3 * SLOW);
         call("ping");
         say("Tablet helper running (fast screenshots and swipes).");
+        release_touch();
         return true;
     } catch (std::exception& e) {
         say(std::string("Tablet helper unavailable (") + e.what() + "); using screencap and input.");
         helper_stop();
         return false;
     }
+}
+
+// A tap on the empty strip left of the game: if a drag was cut off (the bot stopped while
+// the finger was down), the game is left holding a piece over the tray and nothing can be
+// read; any new touch ends that.
+void release_touch() {
+    if (!helper_ok()) return;
+    try { call("swipe 150 900 150 900 0 20"); } catch (std::exception&) {}
 }
 
 void helper_restart() { helper_stop(); HELPER_RETRY_AT = 0; helper_start(); }

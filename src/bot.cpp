@@ -1,4 +1,7 @@
-// v5.5-cpp-max: the Block Blast bot in C++. Screenshot -> read board and tray -> plan ->
+// v5.6-hyperspeed: v5.5.1-exp (planner tuned for long-horizon survival)
+// with a faster play loop: drags no longer slow down for good after one miss, and tighter,
+// adjustable timings (--swipe-ms, --gap-ms, --deal-settle-ms, --check-delay-ms). Target set
+// by the user: 170 moves/min. The Block Blast bot in C++. Screenshot -> read board and tray -> plan ->
 // swipe -> check, on a USB- or Wi-Fi-connected tablet (2880x1800 landscape) over adb.
 // A small helper on the tablet (helper/BBHelper.java) mirrors the screen (a frame in
 // ~0.04 s instead of ~0.37 s) and injects touches; without it the bot uses screencap/input.
@@ -33,7 +36,9 @@ static const int DANGER_FROM = 28;  // cells filled after a tray from which it i
 static const double UNCHANGED_AFTER = .3;  // helper: an unchanged board is a miss only after this long
 static const double UNKNOWN_AFTER = 3.0;   // seconds without a board before recovery taps anything
 static const double CONFIRM_GAP = .08;     // helper: time between two reads that must agree
-static int DEAL_SETTLE_MS = 60;  // a new tray's pieces look settled a moment before the game takes drags
+static bool CHECK_EVERY = false;  // --check-every: check every drop (v5.5 behaviour)
+static int CHECK_DELAY_MS = 15;  // helper: wait before the first check frame (the game needs a moment to draw a drop)
+static int DEAL_SETTLE_MS = 30;  // a new tray's pieces look settled a moment before the game takes drags
 static bool DEBUG = getenv("BB_DEBUG") != nullptr;  // save the screen when a check times out
 
 static void save_debug(const std::string& why) {
@@ -116,6 +121,7 @@ static bool in_tray(const Image& im, const TrayPiece& piece) {
 struct Settled { Image im; std::optional<u64> board; bool early; };
 static Settled settle(u64 before, u64 expected, u64 placed, u64 residual, const TrayPiece& piece, double timeout = 3.0) {
     double start = now(), end = start + timeout;
+    if (helper_ok()) sleep_s(CHECK_DELAY_MS / 1000.0);
     std::optional<std::pair<u64, u64>> last; int unchanged = 0; long long prev_frame = -2;
     u64 cleared = (before | placed) & ~expected;
     for (;;) {
@@ -157,7 +163,7 @@ static Settled settle(u64 before, u64 expected, u64 placed, u64 residual, const 
 
 struct Step { int slot, x, y; u64 after, before; Cells cells; };
 
-struct Args { bool play = false; long long max_moves = 1000; int pickup_y = 1232, swipe_ms = 80; };
+struct Args { bool play = false; long long max_moves = 1000; int pickup_y = 1232, swipe_ms = 70; };
 
 static void main_loop(const Args& args) {
     std::map<Cells, std::pair<double, double>> corrections;
@@ -176,7 +182,12 @@ static void main_loop(const Args& args) {
     double deal_wait = helper_ok() ? .1 : .2; bool probe = false;
     std::optional<std::pair<u64, std::vector<Cells>>> last_state; std::optional<std::tuple<int, int, int>> last_first;
     int repeat = 0; bool danger = false;
-    double slow_from = 1e18;  // finger distance from which drags use SAFE_MS (learned from misses)
+    // Slow drags after misses are temporary: v5.5 slowed every later long drag for the rest
+    // of the run after one miss (0.21 s per drag instead of 0.09 s). Now two fast misses
+    // within 30 drags slow long drags for the next 30 drags only.
+    double slow_from = 1e18;  // finger distance from which drags use SAFE_MS
+    int slow_left = 0, drags_done = 0;
+    std::vector<int> fast_misses;  // drag numbers of recent fast misses
     std::vector<TrayPiece> pieces; std::map<int, TrayPiece> by_slot;
     std::vector<std::string> why;
     Params params;
@@ -185,6 +196,8 @@ static void main_loop(const Args& args) {
     double tray_seen_at = 0, prev_at = 0;  // when the bot started waiting for the tray to hold still
 
     auto drag_ms = [&](double sx, double sy, double dx, double dy) {
+        drags_done++;
+        if (slow_left > 0 && --slow_left == 0) slow_from = 1e18;
         return args.swipe_ms < SAFE_MS && std::hypot(dx - sx, dy - sy) >= slow_from ? SAFE_MS : args.swipe_ms;
     };
     auto miss_step = [] { return helper_ok() ? .02 : .04; };
@@ -249,6 +262,7 @@ static void main_loop(const Args& args) {
                 if (tray_errors == 20) save_unknown();
                 if (tray_errors % 10 == 3) update_layout();  // the game may have been resized
                 if (tray_errors > 3) log(std::string(e.what()) + " Waiting for screen to settle.");
+                if (tray_errors % 15 == 0) { log("Tray unreadable for a while: releasing any stuck touch."); release_touch(); }
                 if (probe) { probe = false; deal_wait = std::min(.6, deal_wait + miss_step()); }
                 why.push_back("tray-moving"); im.reset(); continue;
             }
@@ -365,13 +379,17 @@ static void main_loop(const Args& args) {
         double dx = sx + (target_x - tray_center_x) / GAIN + adjust_x, dy = sy + (target_y - args.pickup_y) / GAIN + adjust_y;
         u64 placed = 0; for (auto [a, b] : p.cells) placed |= 1ULL << ((st.y + b) * 8 + st.x + a);
         u64 cleared = (*board | placed) & ~st.after;
-        // With the helper a check frame costs ~0.04 s, so every drop is checked (a miss is
-        // retried at once); unchecked drops let the bot's picture drift from the real board,
-        // which lost games. Without it only a tray's last piece is checked (as in v5.4).
-        bool careful = repeat >= 1 || danger || helper_ok();
+        // Which drops get a check. With the helper (v5.6): a tray's last drop always, and its
+        // check compares the whole board with the plan, so a missed or misplaced earlier piece
+        // is caught on the same tray; the earlier drops go straight after each other (each
+        // check cost ~0.11 s), except after a repeated position or with --check-every. Without the helper only the last piece of a careful tray (as in v5.4).
+        bool careful = repeat >= 1 || danger;
+        // (A crowded board is still checked in full by the last drop; checking each drop there
+        // too cost ~0.3 s per tray.)
+        bool check = helper_ok() ? (plan_seq.empty() || repeat >= 1 || CHECK_EVERY) : (careful && plan_seq.empty());
         bool first_of_tray = pieces.size() == 3;
         if (first_of_tray && helper_ok()) sleep_s(DEAL_SETTLE_MS / 1000.0 - (now() - planned_at));
-        if (!careful || (!plan_seq.empty() && !helper_ok())) {
+        if (!check) {
             double t0 = now(); swipe(sx, sy, dx, dy, repeat >= 1 ? RETRY_MS : drag_ms(sx, sy, dx, dy));
             if (cleared) clears.push_back({cleared, t0});
             since = cleared ? 0 : since + 1;
@@ -421,8 +439,12 @@ static void main_loop(const Args& args) {
             if (*actual != *board) break;
             // A miss on a fresh tray's first drag is the game not taking drags yet, not speed.
             if (ms < SAFE_MS && !(first_of_tray && helper_ok())) {
-                slow_from = std::min(slow_from, std::hypot(dx - sx, dy - sy) * .9);
-                snprintf(buf, sizeof buf, "Fast drag missed; drags from %.0f px now use %d ms.", slow_from, SAFE_MS); log(buf);
+                fast_misses.push_back(drags_done);
+                fast_misses.erase(std::remove_if(fast_misses.begin(), fast_misses.end(), [&](int d) { return d < drags_done - 30; }), fast_misses.end());
+                if (fast_misses.size() >= 2) {
+                    slow_from = std::min(slow_from, std::hypot(dx - sx, dy - sy) * .9); slow_left = 30;
+                    snprintf(buf, sizeof buf, "Fast drags missed twice; drags from %.0f px use %d ms for the next 30 drags.", slow_from, SAFE_MS); log(buf);
+                } else log("Fast drag missed (once; drags stay fast).");
             }
             log("Retrying unplaced piece.");
         }
@@ -472,6 +494,8 @@ int main(int argc, char** argv) {
         else if (a == "--gap-ms") GAP_MS = (int)val();
         else if (a == "--hold-ms") HOLD_MS = (int)val();
         else if (a == "--deal-settle-ms") DEAL_SETTLE_MS = (int)val();
+        else if (a == "--check-delay-ms") CHECK_DELAY_MS = (int)val();
+        else if (a == "--check-every") CHECK_EVERY = true;
         else { fprintf(stderr, "unknown option %s\n", a.c_str()); return 2; }
     }
     for (;;) {

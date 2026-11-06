@@ -21,7 +21,7 @@ int main(int argc, char** argv) {
         try {
             auto ps = read_pieces(im); printf(" pieces=");
             for (auto& p : ps) { printf("%d:", p.slot); for (auto [x, y] : p.cells) printf("%d%d", x, y); printf("@%d,%d%s;", p.ox, p.oy, at_rest(p) ? "r" : ""); }
-        } catch (std::exception& e) { printf(" pieces=ERR"); }
+        } catch (std::exception& e) { printf(" pieces=ERR(%s)", e.what()); }
         printf(" green=%d play=%d rating=%d\n", (int)green_button(im), (int)play_button(im), (int)rating_popup(im));
     }
 }
