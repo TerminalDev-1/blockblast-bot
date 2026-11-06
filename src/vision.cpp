@@ -7,6 +7,7 @@
 namespace bb {
 
 using Col = std::array<double, 3>;
+static const double TEXTURED = 14;  // a cell centre with more texture than this isn't a flat board cell
 
 static double dist(const Col& a, const Col& b) {
     return std::sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]));
@@ -109,7 +110,9 @@ bool is_board(const Image& im) {
     auto st = cell_stats(im);
     // Board cells have flat centres; menus and pop-ups don't. A few textured cells are
     // allowed for line-clear sparkles and combo text (full-screen ads have 8, menus 13+).
-    int textured = 0; for (auto& s : st) textured += s.texture > 12;
+    // 14, not 12: the glossy navy theme's blocks measure 12.4-12.5 and the board went unrecognised
+    // (the bot stalled on "unknown screen"); every saved menu/ad/pop-up still has 7+ cells above 14.
+    int textured = 0; for (auto& s : st) textured += s.texture > TEXTURED;
     if (textured > 6) return false;
     std::vector<Col> cs; for (auto& s : st) cs.push_back(s.lab);
     return colour_groups(cs)[0].size() >= 4;
@@ -155,7 +158,7 @@ u64 read_board(const Image& im, u64 hint_empty) {
 
 Visible visible_board(const Image& im, u64 hint_empty) {
     auto st = cell_stats(im);
-    std::vector<int> flat; for (int i = 0; i < 64; i++) if (st[i].texture <= 12) flat.push_back(i);
+    std::vector<int> flat; for (int i = 0; i < 64; i++) if (st[i].texture <= TEXTURED) flat.push_back(i);
     if (flat.size() < 44) return {false, 0, 0};
     std::vector<Col> fc; for (int i : flat) fc.push_back(st[i].lab);
     if (colour_groups(fc)[0].size() < 4) return {false, 0, 0};

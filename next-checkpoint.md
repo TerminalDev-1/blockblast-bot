@@ -6,7 +6,9 @@ built or tested. Queued checkpoints are done **in version order, lowest number f
 
 ## In progress
 
-(nothing yet: next in order is v5.8-mach1-exp)
+### v5.8-mach1-exp
+- Started. **All about speed, over Wi-Fi (the user won't use USB): 210 moves/min.** Automatic game
+  start and game-over recovery are back. See its entry below.
 
 ## Done
 
