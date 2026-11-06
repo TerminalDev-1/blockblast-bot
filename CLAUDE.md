@@ -48,6 +48,7 @@ Plays Block Blast (Classic) on a USB-connected Android tablet (2880x1800 landsca
 - **Releasing (making a version the main bot):**
   - A version whose name has **no `-exp`** becomes the main bot when it is finished.
   - A version tagged **`-exp`** is an experimental checkpoint. It becomes the main bot only after asking the user twice: first "Do you want to release <name>?", and after a yes, "Do you really want to release <name>?". Release only after two yeses.
+  - **Experimental versions (`-exp`) are built the same way as any version** (ask the name, own folder, live speed measured, benchmark updated, two yeses to release). In the benchmark (`bench.py` labels, chart, README table) an experimental version is labelled with **"(experimental)" after its name**, e.g. `v5.5.1 (experimental)`, because an experimental checkpoint may be temporary.
   - On release the old main bot is never deleted: move its files to `versions/<its name>/` (sidelined), copy the new version to the root, commit, tag it (`git tag <name>`) and push with the tag.
   - Delete a version folder only when the user says so.
 - **Every new version must update the benchmark**: add it to `VERSIONS` in `bench.py` (label + commit; the working tree is `None` until committed, then pin the commit), put its measured live moves/min (from `bot.log`, 100+ moves) in `LIVE_SPEED` (a speed-only version with the same planner goes only in `LIVE_SPEED`), rerun `python bench.py`, add a row to the README's version table, and commit `benchmark.jpg` and `bench-results.json` with the change.
