@@ -15,3 +15,4 @@ unknown-screens/
 bot_next.py
 versions/*/build/
 debug-frames/
+/build/

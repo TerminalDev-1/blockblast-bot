@@ -16,6 +16,9 @@ bot's logs and is listed in LIVE_SPEED by hand.
 import importlib.util, json, os, subprocess, sys, tempfile, time
 from multiprocessing import Pool
 
+# The trays are dealt with the Python planner's piece list (v5.4, the last Python version),
+# so every version, Python or C++, plays exactly the same games.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'versions', 'v5.4-highspeed-max'))
 import planner as current
 
 # (label, commit or None for the working tree, kind)
