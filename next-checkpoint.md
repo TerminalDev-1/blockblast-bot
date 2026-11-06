@@ -27,3 +27,12 @@ on next (the user picks; nothing here starts on its own). See the rules in `CLAU
   simulator results: 54 of 128 games lasting 3000 moves) while keeping breakneck speed. Use the
   spare planning time (planning is ~3 ms of a ~1 s tray) for a deeper search.
 - Provisional until the user approves it (one yes to release, as its name has no `-exp`).
+
+### v5.8-mach1
+- Name chosen by the user ("v5.8-Mach 1"). After v5.7-speedbreaker (when the user picks it).
+- Goal: **run at the speed ceiling: 210 moves/min** (the user said "210 moves per second"; per
+  minute is the ceiling estimated for this game: the deal animation alone takes ~0.5 s per tray,
+  so a tray of 3 moves can't take less than ~0.85 s). Confirm the unit with the user when starting.
+- Builds on whatever v5.7-speedbreaker achieves; every part of a tray except the game's own deal
+  animation has to be close to zero (drags, checks, reading, planning all overlapped).
+- Provisional until the user approves it (one yes to release, as its name has no `-exp`).
