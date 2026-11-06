@@ -22,6 +22,7 @@ std::string ensure_device();
 bool wireless();
 void open_app(const std::string& package);
 std::string focused_package();  // "" while switching
+std::string focused_window();   // "package/activity" (or just the package for dialogs; "" while switching)
 bool close_accessible_ad();     // taps an ad's close button (or a safe dialog answer)
 void key_back();
 

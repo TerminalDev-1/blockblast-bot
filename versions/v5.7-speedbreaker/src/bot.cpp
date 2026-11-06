@@ -61,21 +61,29 @@ std::string bb::helper_dex_path() {
 static std::string TRACE;
 
 // v5.7: after a tray's last drop, watch only the tray (a quarter of a full frame, so frames come
-// much faster) until all three new pieces read as known shapes at their resting spots, the same
-// in two different frames at least 30 ms apart (pieces read as other shapes while they grow in).
-static std::optional<std::vector<TrayPiece>> wait_for_tray(double timeout = 1.5) {
+// much faster) until it holds still. Three known pieces at their resting spots, the same in
+// frames at least 30 ms apart, are the new tray (pieces read as other shapes while they grow
+// in). Pieces of the old tray at rest, still for 120 ms, mean a drop missed although the board
+// check accepted it (line-clear effects can hide cells): leftover is set and nothing returned.
+static std::optional<std::vector<TrayPiece>> wait_for_tray(const std::vector<TrayPiece>& old_tray, bool& leftover, double timeout = 1.2) {
     std::vector<TrayPiece> prev; long long prev_frame = -2; double prev_at = 0, start = now();
+    leftover = false;
+    auto from_old = [&](const TrayPiece& q) {
+        for (auto& o : old_tray) if (o.slot == q.slot && o.cells == q.cells) return true;
+        return false;
+    };
     while (now() - start < timeout) {
         Image t = capture_rect(RX0, 1285, RX1, RY1);
         if (t.frame >= 0 && t.frame == prev_frame) { sleep_s(.004); continue; }
         std::vector<TrayPiece> ps;
         try { ps = read_pieces(t); } catch (UnreadableTray&) { prev.clear(); prev_frame = t.frame; continue; }
-        bool ok = ps.size() == 3;
+        bool ok = !ps.empty();
         for (auto& q : ps) ok = ok && shape_index(q.cells) >= 0 && at_rest(q);
-        bool same = ok && prev.size() == 3;
-        for (size_t i = 0; same && i < 3; i++)
+        bool same = ok && prev.size() == ps.size();
+        for (size_t i = 0; same && i < ps.size(); i++)
             same = ps[i].slot == prev[i].slot && ps[i].cells == prev[i].cells && std::abs(ps[i].ox - prev[i].ox) <= 1 && std::abs(ps[i].oy - prev[i].oy) <= 1;
-        if (same && now() - prev_at >= .03) return ps;
+        if (same && ps.size() == 3 && now() - prev_at >= .03) return ps;
+        if (same && ps.size() < 3 && std::all_of(ps.begin(), ps.end(), from_old) && now() - prev_at >= .12) { leftover = true; return std::nullopt; }
         if (!same) { prev = ok ? ps : std::vector<TrayPiece>{}; prev_at = now(); }
         prev_frame = t.frame;
     }
@@ -108,8 +116,26 @@ static void save_unknown() {
 
 static double LAST_BACK = -1e9;
 
+// Full-screen ads shown inside the game run in the ad network's own activity.
+static bool ad_window(const std::string& w) {
+    for (const char* k : {"applovin", "AdActivity", "unity3d", "ironsource", "vungle", "mbridge", "bytedance", "pangle",
+                          "facebook.ads", "inmobi", "chartboost", "fyber", "adcolony", "mintegral", "bigo"})
+        if (w.find(k) != std::string::npos) return true;
+    return false;
+}
+
 static void recover_screen(const Image& im) {
-    std::string pkg = focused_package();
+    std::string window = focused_window(), pkg = window.substr(0, window.find('/'));
+    if (ad_window(window)) {
+        // v5.6 called this an "unknown screen" and only waited. An ad's close button is
+        // often drawn inside it (invisible to the accessibility tree), and Back closes it
+        // once its countdown is over: try both, Back at most every 30 s.
+        if (close_accessible_ad()) { sleep_s(2); return; }
+        static double said = -1e9;
+        if (now() - said > 60) { say("Ad on screen (" + window.substr(window.rfind('.') + 1) + "): waiting for it to end."); said = now(); }
+        if (now() - LAST_BACK >= 30) { LAST_BACK = now(); key_back(); }
+        sleep_s(3); return;
+    }
     if (!pkg.empty() && pkg != "com.block.juggle") {
         // Another app (an ad opened the store or a browser). Back only when it's still
         // there a moment later, and at most once every 15 s: v5.4 pressed Back on every
@@ -148,6 +174,7 @@ static bool in_tray(const Image& im, const TrayPiece& piece) {
 struct Settled { Image im; std::optional<u64> board; bool early; };
 static Settled settle(u64 before, u64 expected, u64 placed, u64 residual, const TrayPiece& piece, double timeout = 3.0) {
     double start = now(), end = start + timeout;
+    std::optional<double> held_since;
     if (helper_ok()) sleep_s(CHECK_DELAY_MS / 1000.0);
     std::optional<std::pair<u64, u64>> last; int unchanged = 0; long long prev_frame = -2;
     u64 cleared = (before | placed) & ~expected;
@@ -176,6 +203,10 @@ static Settled settle(u64 before, u64 expected, u64 placed, u64 residual, const 
         if (unchanged >= 2 && (im.frame < 0 || now() - start >= UNCHANGED_AFTER)) {
             if (im.frame < 0 || in_tray(im, piece)) return {im, before, false};
             TRACE += 't';
+            // The piece left its slot but never landed: the game is still holding it (a touch
+            // that didn't end). v5.6 waited the full 3 s; release it and count a miss.
+            if (!held_since) held_since = now();
+            else if (now() - *held_since > .4) { release_touch(); TRACE += 'R'; return {im, before, false}; }
         }
         if ((cleared | residual) && ((b ^ before) & seen) && !((b ^ expected) & outside)) return {im, expected, true};
         // A changed board read twice in a row is final (clear animations differ from both);
@@ -220,6 +251,7 @@ static void main_loop(const Args& args) {
     Params params;
     double planned_at = 0;
     bool new_tray = false;  // carry holds a new tray read by wait_for_tray
+    std::vector<TrayPiece> tray_at_plan;  // the tray as it was when it was planned
     // Deal timing marks (seconds since the previous tray's last drop), logged per tray.
     double t_up = 0, t_board = -1, t_read = -1, t_still = -1;
     std::optional<std::pair<std::vector<TrayPiece>, long long>> prev_tray;  // tray in the previous helper frame
@@ -378,7 +410,7 @@ static void main_loop(const Args& args) {
             repeat = last_state && *last_state == state ? repeat + 1 : 0; last_state = state;
             if (repeat >= 2 && last_first) failed_moves.push_back(*last_first);
             if (repeat) log("Same position again (" + std::to_string(repeat) + "x): a drop missed; dragging slowly.");
-            double t = now(); planned_at = t;
+            double t = now(); planned_at = t; tray_at_plan = pieces;
             std::vector<Piece> in; for (auto& p : pieces) in.push_back({p.slot, p.cells});
             auto seq = plan(*board, in, params, failed_moves, since, (uint64_t)turn);
             if (!seq.empty()) last_first = std::make_tuple(seq[0].slot, seq[0].x, seq[0].y); else last_first.reset();
@@ -487,9 +519,15 @@ static void main_loop(const Args& args) {
             if (!actual) { log("Screen changed; checking state."); break; }
             if (last_of_tray && actual == st.after && helper_ok()) {
                 // The board is right: now only the tray matters until the new pieces hold still.
-                if (auto fresh = wait_for_tray()) {
+                bool leftover = false;
+                if (auto fresh = wait_for_tray(tray_at_plan, leftover)) {
                     t_read = t_still = now() - t_up;
                     carry = *fresh; new_tray = true; trusted = st.after;
+                } else if (leftover) {
+                    // A piece of this tray is still in it: a drop missed. Read the real board.
+                    log("A piece is still in the tray: a drop missed; reading the board again.");
+                    if (cleared && !clears.empty()) clears.pop_back();
+                    actual.reset(); break;
                 }
             }
             if (*actual != *board) break;

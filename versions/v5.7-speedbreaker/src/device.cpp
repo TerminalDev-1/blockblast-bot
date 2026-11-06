@@ -132,16 +132,22 @@ void open_app(const std::string& package) {
 
 void key_back() { adb({"shell", "input", "keyevent", "BACK"}); }
 
+std::string focused_window() {
+    std::string out = adb({"shell", "dumpsys", "window"}, 20, false);
+    // The first mCurrentFocus line with a window (dumpsys lists one per display).
+    std::smatch m;
+    for (size_t at = out.find("mCurrentFocus="); at != std::string::npos; at = out.find("mCurrentFocus=", at + 1)) {
+        std::string line = out.substr(at, out.find('\n', at) - at);
+        if (std::regex_search(line, m, std::regex(R"( u\d+ ([\w.$/]+)\})"))) return m[1];
+    }
+    return "";
+}
+
 std::string focused_package() {
     // The game's own dialogs (e.g. its "Leave now?" prompt) are named by the package alone,
     // without "/activity"; v5.4 took them for another app and kept pressing Back.
-    std::string out = adb({"shell", "dumpsys", "window"}, 20, false);
-    size_t at = out.find("mCurrentFocus=");
-    if (at == std::string::npos) return "";
-    std::string line = out.substr(at, out.find('\n', at) - at);
-    std::smatch m;
-    if (std::regex_search(line, m, std::regex(R"( u\d+ ([\w.]+)[/}])"))) return m[1];
-    return "";
+    std::string w = focused_window();
+    return w.substr(0, w.find('/'));
 }
 
 bool close_accessible_ad() {

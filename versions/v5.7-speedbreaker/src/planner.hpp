@@ -41,10 +41,12 @@ struct Params {
 
 extern const int COMBO_WINDOW;
 
-// Board score weights (fast_eval / fit_eval). Defaults = the values used since the Python
-// planner; tuned with sim.exe.
+// Board score weights (fast_eval / fit_eval). v5.7 tuned them with sim.exe (one at a time at
+// 0.6x / 1.5x, then combined): smooth edges and no holes matter more, raw empty space less.
+// On 64 fresh games up to 3000 moves: 2090 moves on average vs 1788 with the old weights
+// (empty 1.0, hole 6.0, trans 0.45), 28 vs 23 games lasting all 3000 moves.
 struct EvalWeights {
-    double empty = 1.0, hole = 6.0, pocket = 1.5, trans = 0.45, square3 = 7.0, line5 = 4.0;
+    double empty = 0.6, hole = 9.0, pocket = 1.5, trans = 0.675, square3 = 7.0, line5 = 4.0;
     double risk = 120.0, room = 6.0;
 };
 extern EvalWeights EVAL;
