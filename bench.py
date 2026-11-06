@@ -30,7 +30,7 @@ VERSIONS = [
     ('v5 deeper look-ahead', '698ad26', 'combo'),
     ('v5.1 fast planner', 'f16d74a', 'combo'),
     ('v5.4 highspeed max', '85fa355', 'combo'),
-    ('v5.5 cpp max', None, 'cpp'),
+    ('v5.5 cpp max', 'e2f0115', 'cpp'),
 ]
 # Where each C++ version's planner source lives in its commit.
 CPP_SRC = {'v5.5 cpp max': 'versions/v5.5-cpp-max/src'}
@@ -41,7 +41,7 @@ LIVE_SPEED = {'v1 original': None, 'v2 bitboard planner': None, 'v3 look-ahead':
               'v5 deeper look-ahead': 94, 'v5.1 fast planner': 87,
               'v5.3 flash max': 100,
               'v5.3.1 flash highspeed max': 122,
-              'v5.4 highspeed max': 100, 'v5.5 cpp max': None}
+              'v5.4 highspeed max': 100, 'v5.5 cpp max': 139}
 
 WINDOW = current.COMBO_WINDOW
 

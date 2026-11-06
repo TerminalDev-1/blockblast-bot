@@ -75,5 +75,16 @@
   "mean_streak": 14.26457399103139,
   "live_moves_per_min": 100,
   "commit": "85fa355"
+ },
+ "v5.5 cpp max": {
+  "games": 24,
+  "cap": 300,
+  "moves": 276.5833333333333,
+  "reached_cap": 20,
+  "lines_per_100": 48.463392588128954,
+  "best_streak": 67.25,
+  "mean_streak": 29.349514563106798,
+  "live_moves_per_min": 139,
+  "commit": "e2f0115"
  }
 }
