@@ -49,7 +49,8 @@ LIVE_SPEED = {'v1 original': None, 'v2 bitboard planner': None, 'v3 look-ahead':
               'v5.3.1 flash highspeed max': 122,
               'v5.4 highspeed max': 100, 'v5.5 cpp max': 139, 'v5.5.1 (experimental)': 154,
               'v5.6 hyperspeed': 156,  # same planner as v5.5.1: speed only
-              'v5.7 speedbreaker': 165}  # released with the safe tray check (211 with the riskier one)
+              'v5.7 speedbreaker': 165,  # released with the safe tray check (211 with the riskier one)
+              'v5.8 mach1': 174}  # same planner as v5.7: speed only
 
 WINDOW = current.COMBO_WINDOW
 

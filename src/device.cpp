@@ -16,7 +16,8 @@ namespace bb {
 
 double SCALE = 1.0;
 int SHOTS = 0;
-int GAP_MS = 15;
+int GAP_MS = 40;  // the game ignores or mishandles a drag starting <~40 ms after a drop (10 caused misses after batches)
+int BATCH_GAP_MS = 40;
 int HOLD_MS = 0;
 static std::string SERIAL;
 static double SLOW = 1;  // timeouts are stretched over Wi-Fi
@@ -288,10 +289,15 @@ static void helper_failed(const std::exception& e) {
 }
 
 // Screen rectangle from the helper's live mirror.
-static Image helper_frame(int x0, int y0, int x1, int y1) {
-    std::string head = call("cap " + std::to_string(x0) + " " + std::to_string(y0) + " " + std::to_string(x1 - x0) + " " + std::to_string(y1 - y0));
-    int w, h; long long n, age, frame;
-    if (sscanf(head.c_str(), "F %d %d %lld %lld %lld", &w, &h, &n, &age, &frame) != 5) throw AdbError("helper: bad reply " + head);
+static Image helper_frame(int x0, int y0, int x1, int y1, int still_hold = -1, int still_timeout = 0, bool* timed_out = nullptr) {
+    std::string cmd = still_hold >= 0 ? "still " : "cap ";
+    cmd += std::to_string(x0) + " " + std::to_string(y0) + " " + std::to_string(x1 - x0) + " " + std::to_string(y1 - y0);
+    if (still_hold >= 0) { cmd += " " + std::to_string(still_hold) + " " + std::to_string(still_timeout); set_timeout(still_timeout / 1000.0 + 3 * SLOW); }
+    std::string head = call(cmd);
+    if (still_hold >= 0) set_timeout(3 * SLOW);
+    int w, h, to = 0; long long n, age, frame;
+    if (sscanf(head.c_str(), "F %d %d %lld %lld %lld %d", &w, &h, &n, &age, &frame, &to) < 5) throw AdbError("helper: bad reply " + head);
+    if (timed_out) *timed_out = to != 0;
     std::string data(n, '\0'); recv_exact(data.data(), n);
     Image im; im.x0 = x0; im.y0 = y0; im.w = w; im.h = h; im.frame = frame;
     im.rgb = inflate_zlib((const uint8_t*)data.data(), data.size());
@@ -391,6 +397,39 @@ void update_layout() {
         char buf[96]; snprintf(buf, sizeof buf, "Game area is %d px tall; scaling by %.3f.", (int)std::lround(scale * H), scale); say(buf);
     }
     SCALE = scale;
+}
+
+Image capture_still(int x0, int y0, int x1, int y1, int hold_ms, int timeout_ms, bool& timed_out) {
+    timed_out = false;
+    if (SCALE == 1.0 && (helper_ok() || helper_start())) {
+        try {
+            SHOTS++;
+            Image im = helper_frame(x0, y0, x1, y1, hold_ms, timeout_ms, &timed_out);
+            im.serial = ++SERIAL_NO;
+            return im;
+        } catch (std::exception& e) { helper_failed(e); }
+    }
+    return capture_rect(x0, y0, x1, y1);
+}
+
+void swipes(const std::vector<Drag>& drags) {
+    if (drags.size() == 1 || !helper_ok()) { for (auto& d : drags) swipe(d.sx, d.sy, d.dx, d.dy, d.ms); return; }
+    sleep_s(LAST_UP + GAP_MS / 1000.0 - now());
+    // On the tablet there is no Wi-Fi delay between drags, and the game ignores a drag that
+    // starts less than ~40 ms after the previous drop (measured), so batched drags keep that gap.
+    std::string cmd = "swipes " + std::to_string(BATCH_GAP_MS) + " " + std::to_string(drags.size());
+    int total = 0;
+    for (auto& d : drags) {
+        auto [a, b] = to_screen(d.sx, d.sy); auto [c, e] = to_screen(d.dx, d.dy);
+        char buf[96]; snprintf(buf, sizeof buf, " %.0f %.0f %.0f %.0f %d %d", a, b, c, e, d.ms, HOLD_MS); cmd += buf;
+        total += d.ms + BATCH_GAP_MS + 20;
+    }
+    try {
+        set_timeout(total / 1000.0 + 3 * SLOW); call(cmd); set_timeout(3 * SLOW);
+        LAST_UP = now();
+        return;
+    } catch (std::exception& e) { helper_failed(e); }
+    for (auto& d : drags) swipe(d.sx, d.sy, d.dx, d.dy, d.ms);
 }
 
 void swipe(double sx, double sy, double dx, double dy, int ms) {

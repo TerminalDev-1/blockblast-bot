@@ -6,7 +6,11 @@
 //
 // Protocol on the local socket "bbhelper" (reach it with `adb forward`), one command per line:
 //   cap X Y W H                  -> "F <w> <h> <len> <ageMs> <frame>\n" + zlib(RGB rows)
+//   still X Y W H HOLD TIMEOUT   -> like cap, but first waits (on the tablet) until that region's
+//                                   pixels haven't changed for HOLD ms (or TIMEOUT ms passed);
+//                                   the reply's 6th field is 1 if it timed out (v5.8)
 //   swipe X1 Y1 X2 Y2 MS HOLD    -> "ok\n"  finger down, moves every ~8 ms for MS, rests HOLD ms, up
+//   swipes GAP N (X1 Y1 X2 Y2 MS HOLD)xN -> "ok\n"  N swipes back to back, GAP ms apart (v5.8)
 //   ping                         -> "ok\n"
 // Build with build-helper.ps1 (JDK + Android SDK).
 import android.graphics.PixelFormat;
@@ -77,10 +81,29 @@ public class BBHelper {
         while ((line = in.readLine()) != null) {
             String[] a = line.trim().split(" ");
             try {
-                if (a[0].equals("cap")) {
+                if (a[0].equals("cap") || a[0].equals("still")) {
                     int x = Integer.parseInt(a[1]), y = Integer.parseInt(a[2]);
                     int cw = Integer.parseInt(a[3]), ch = Integer.parseInt(a[4]);
-                    long frame, age;
+                    long frame, age; int timedOut = 0;
+                    if (a[0].equals("still")) {
+                        // Waiting for stillness here saves a Wi-Fi round trip per frame.
+                        long hold = Long.parseLong(a[5]), timeout = Long.parseLong(a[6]);
+                        long start = SystemClock.uptimeMillis(), changedAt = start, seen = -1, hash = 0;
+                        while (true) {
+                            synchronized (lock) {
+                                while (latest == null && SystemClock.uptimeMillis() - start < 2000) lock.wait(50);
+                                if (latest != null && frames != seen) {
+                                    seen = frames;
+                                    long h = regionHash(latest, x, y, cw, ch);
+                                    if (h != hash) { hash = h; changedAt = SystemClock.uptimeMillis(); }
+                                }
+                            }
+                            long now = SystemClock.uptimeMillis();
+                            if (now - changedAt >= hold) break;
+                            if (now - start >= timeout) { timedOut = 1; break; }
+                            SystemClock.sleep(3);
+                        }
+                    }
                     synchronized (lock) {
                         long end = SystemClock.uptimeMillis() + 2000;
                         while (latest == null && SystemClock.uptimeMillis() < end) lock.wait(50);
@@ -106,8 +129,16 @@ public class BBHelper {
                     if (packed.length < cw * ch * 3 + 1024) packed = new byte[cw * ch * 3 + 1024];
                     int n = 0;
                     while (!deflater.finished()) n += deflater.deflate(packed, n, packed.length - n);
-                    out.write(("F " + cw + " " + ch + " " + n + " " + age + " " + frame + "\n").getBytes());
+                    out.write(("F " + cw + " " + ch + " " + n + " " + age + " " + frame + " " + timedOut + "\n").getBytes());
                     out.write(packed, 0, n);
+                } else if (a[0].equals("swipes")) {
+                    int gap = Integer.parseInt(a[1]), count = Integer.parseInt(a[2]);
+                    for (int i = 0; i < count; i++) {
+                        int o = 3 + i * 6;
+                        if (i > 0) SystemClock.sleep(gap);
+                        swipe(f(a[o]), f(a[o + 1]), f(a[o + 2]), f(a[o + 3]), Integer.parseInt(a[o + 4]), Integer.parseInt(a[o + 5]));
+                    }
+                    out.write("ok\n".getBytes());
                 } else if (a[0].equals("swipe")) {
                     swipe(f(a[1]), f(a[2]), f(a[3]), f(a[4]), Integer.parseInt(a[5]), Integer.parseInt(a[6]));
                     out.write("ok\n".getBytes());
@@ -122,6 +153,18 @@ public class BBHelper {
     }
 
     static float f(String s) { return Float.parseFloat(s); }
+
+    // Cheap fingerprint of a screen region (every 3rd pixel of every 3rd row).
+    static long regionHash(Image im, int x, int y, int w, int h) {
+        Image.Plane p = im.getPlanes()[0];
+        ByteBuffer buf = p.getBuffer();
+        int stride = p.getRowStride(), px = p.getPixelStride();
+        long hash = 1125899906842597L;
+        for (int yy = y; yy < y + h; yy += 3)
+            for (int xx = x; xx < x + w; xx += 3)
+                hash = hash * 31 + buf.getInt(yy * stride + xx * px);
+        return hash;
+    }
 
     // Screen mirror: Android 14+ has DisplayManager.createVirtualDisplay(name, w, h,
     // displayIdToMirror, surface) for the shell user; older versions bind a SurfaceControl

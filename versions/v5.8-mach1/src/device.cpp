@@ -16,7 +16,7 @@ namespace bb {
 
 double SCALE = 1.0;
 int SHOTS = 0;
-int GAP_MS = 10;
+int GAP_MS = 40;  // the game ignores or mishandles a drag starting <~40 ms after a drop (10 caused misses after batches)
 int BATCH_GAP_MS = 40;
 int HOLD_MS = 0;
 static std::string SERIAL;

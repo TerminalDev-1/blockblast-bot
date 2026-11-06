@@ -1,4 +1,4 @@
-// v5.7-speedbreaker: v5.6-hyperspeed rebuilt for speed (target 200 moves/min) and a smarter planner.
+// v5.8-mach1: v5.7-speedbreaker made faster over Wi-Fi: a tray's drags go to the tablet in one command (40 ms apart), the fast tray check (never before 0.5 s after the last drop), and the result screen is acted on at once.
 // v5.6 brought a faster play loop: drags no longer slow down for good after one miss, and tighter,
 // adjustable timings (--swipe-ms, --gap-ms, --deal-settle-ms, --check-delay-ms). Target set
 // by the user: 170 moves/min. The Block Blast bot in C++. Screenshot -> read board and tray -> plan ->
@@ -39,6 +39,10 @@ static const double CONFIRM_GAP = .08;     // helper: time between two reads tha
 static bool CHECK_EVERY = false;  // --check-every: check every drop (v5.5 behaviour)
 static int CHECK_DELAY_MS = 15;  // helper: wait before the first check frame (the game needs a moment to draw a drop)
 static int DEAL_SETTLE_MS = 15;  // a new tray's pieces look settled a moment before the game takes drags
+static double EARLIEST_DEAL = 0.5;  // s after the last drop before a new tray can be accepted
+static bool TRAY_STILL = false;  // --tray-still: let the tablet wait for the tray to hold still
+static int TRAY_FRAMES = 2;  // agreeing frames needed to accept a new tray (v5.7: 3)
+static int STILL_MS = 60;  // v5.8: tray pixels unchanged this long = the new pieces are in place
 static int TRAY_HOLD_MS = 30;  // a new tray must read the same at least this long (and in 3 frames)
 static bool DEBUG = getenv("BB_DEBUG") != nullptr;  // save the screen when a check times out
 
@@ -68,7 +72,7 @@ static std::string TRACE;
 // frames 100 ms apart, are the new tray (pieces read as other shapes while they grow
 // in). Pieces of the old tray at rest, still for 120 ms, mean a drop missed although the board
 // check accepted it (line-clear effects can hide cells): leftover is set and nothing returned.
-static std::optional<std::vector<TrayPiece>> wait_for_tray(const std::vector<TrayPiece>& old_tray, bool& leftover, double timeout = 1.2) {
+static std::optional<std::vector<TrayPiece>> wait_for_tray(const std::vector<TrayPiece>& old_tray, bool& leftover, double dropped_at, double timeout = 1.2) {
     std::vector<TrayPiece> prev; long long prev_frame = -2; double prev_at = 0, start = now();
     int agree = 0;
     leftover = false;
@@ -77,8 +81,12 @@ static std::optional<std::vector<TrayPiece>> wait_for_tray(const std::vector<Tra
         return false;
     };
     while (now() - start < timeout) {
-        Image t = capture_rect(RX0, 1285, RX1, RY1);
-        if (t.frame >= 0 && t.frame == prev_frame) { sleep_s(.004); continue; }
+        // Default: a stream of tray-only frames. --tray-still: the tablet waits until the tray's
+        // pixels hold still (tested: no faster over Wi-Fi than the stream).
+        bool to = !TRAY_STILL;
+        Image t = TRAY_STILL ? capture_still(RX0, 1285, RX1, RY1, STILL_MS, (int)std::max(50.0, (timeout - (now() - start)) * 1000), to)
+                             : capture_rect(RX0, 1285, RX1, RY1);
+        if (t.frame >= 0 && t.frame == prev_frame) { if (!TRAY_STILL) sleep_s(.004); continue; }
         std::vector<TrayPiece> ps;
         try { ps = read_pieces(t); } catch (UnreadableTray&) { prev.clear(); prev_frame = t.frame; continue; }
         bool ok = !ps.empty();
@@ -91,11 +99,19 @@ static std::optional<std::vector<TrayPiece>> wait_for_tray(const std::vector<Tra
         bool same = ok && prev.size() == ps.size();
         for (size_t i = 0; same && i < ps.size(); i++)
             same = ps[i].slot == prev[i].slot && ps[i].cells == prev[i].cells && std::abs(ps[i].ox - prev[i].ox) <= 1 && std::abs(ps[i].oy - prev[i].oy) <= 1;
-        // Three different frames in a row that agree (and at least TRAY_HOLD_MS). Logged over 247
-        // deals, 205 wrong readings that looked valid each lasted a single frame; a two-frame
-        // wrong reading once lost a game (three 3x3s), so one more frame of margin.
+        // TRAY_FRAMES different frames in a row that agree (and at least TRAY_HOLD_MS). v5.8 uses 2,
+        // the user's choice for speed: logged over 247 deals, wrong-but-valid readings lasted a
+        // single frame, but a two-frame misread (three 3x3s) once lost a game; v5.7 uses 3.
         agree = same ? agree + 1 : 1;
-        if (same && ps.size() == 3 && agree >= 3 && now() - prev_at >= TRAY_HOLD_MS / 1000.0) return ps;
+        // Never before EARLIEST_DEAL after the last drop: half-grown pieces once read the same in two
+        // frames at 0.42 s, the bot planned with wrong pieces and the game was lost; the real
+        // pieces are only complete at ~0.6 s.
+        if (same && ps.size() == 3 && agree >= TRAY_FRAMES && now() - prev_at >= TRAY_HOLD_MS / 1000.0 &&
+            now() - dropped_at >= EARLIEST_DEAL) return ps;
+        // A pixel-still frame (STILL_MS without any change) can't be a growing piece.
+        if (ok && !to && ps.size() == 3) return ps;
+        if (ok && !to && ps.size() < 3 && std::all_of(ps.begin(), ps.end(), from_old)) { leftover = true; return std::nullopt; }
+        if (TRAY_STILL && ps.empty() && !to) sleep_s(.01);  // empty tray holding still: the deal hasn't started
         if (same && ps.size() < 3 && std::all_of(ps.begin(), ps.end(), from_old) && now() - prev_at >= .12) { leftover = true; return std::nullopt; }
         if (!same) { prev = ok ? ps : std::vector<TrayPiece>{}; prev_at = now(); }
         prev_frame = t.frame;
@@ -160,8 +176,8 @@ static void recover_screen(const Image& im) {
         say("Returning from another app or ad (" + pkg + ")."); key_back(); sleep_s(2); return;
     }
     // Game over and menu: start the next game (automatic start is back, the user's choice).
-    if (play_button(im)) { say("Result screen: starting the next game."); tap(1440, 1335); sleep_s(2); return; }
-    if (green_button(im)) { say("Starting Classic."); tap(1440, 1370); sleep_s(2); return; }
+    if (play_button(im)) { say("Result screen: starting the next game."); tap(1440, 1335); sleep_s(.5); return; }
+    if (green_button(im)) { say("Starting Classic."); tap(1440, 1370); sleep_s(.5); return; }
     double old = SCALE; update_layout();
     if (SCALE != old) return;  // the navigation bar changed; re-read with the new scale
     if (rating_popup(im)) { say("Closing rating prompt."); tap(1778, 525); sleep_s(2); return; }
@@ -264,6 +280,7 @@ static void main_loop(const Args& args) {
     Params params;
     double planned_at = 0;
     bool new_tray = false;  // carry holds a new tray read by wait_for_tray
+    bool last_predragged = false;  // the tray's last drag was sent with the batch
     std::vector<TrayPiece> tray_at_plan;  // the tray as it was when it was planned
     int cells_cap = -1;  // most blocks the board can hold now (blocks at the last plan + that tray's cells)
     std::optional<double> effect_since;
@@ -340,11 +357,23 @@ static void main_loop(const Args& args) {
                             log("Board corrected from the screen (" + std::to_string(__builtin_popcountll(missing)) + " gone, " +
                                 std::to_string(__builtin_popcountll(confirmed)) + " added).");
                             trusted = (*trusted & ~missing) | confirmed; predicted = trusted;
+                            if (confirmed) {
+                                // Keep the frame the decision was made on (diagnosis: real blocks or effects?).
+                                std::filesystem::create_directories("debug-frames");
+                                char hx[96]; snprintf(hx, sizeof hx, "debug-frames/%s-added-%016llx.png", clock_text().c_str(), (unsigned long long)confirmed);
+                                std::string name = hx; for (auto& c : name) if (c == ':') c = '-';
+                                write_png(name, *im);
+                            }
                         }
                         board = trusted;
                     }
                 }
             }
+        }
+        if (!board && !is_board(*im) && args.play && (play_button(*im) || green_button(*im))) {
+            // The result screen or the menu: act at once (v5.7 first waited 3 s like for any
+            // unknown screen, the pause before each new game).
+            recover_screen(*im); im.reset(); plan_seq.clear(); trusted.reset(); predicted.reset(); clears.clear(); continue;
         }
         if (!board && !is_board(*im)) {
             if (!args.play) { say("Not on the game board."); return; }
@@ -465,6 +494,7 @@ static void main_loop(const Args& args) {
             if (repeat >= 2 && last_first) failed_moves.push_back(*last_first);
             if (repeat) log("Same position again (" + std::to_string(repeat) + "x): a drop missed; dragging slowly.");
             double t = now(); planned_at = t; tray_at_plan = pieces;
+            last_predragged = false;  // a new plan: nothing of it has been dragged yet
             cells_cap = __builtin_popcountll(*board); for (auto& q : pieces) cells_cap += (int)q.cells.size();
             std::vector<Piece> in; for (auto& p : pieces) in.push_back({p.slot, p.cells});
             auto seq = plan(*board, in, params, failed_moves, since, (uint64_t)turn);
@@ -530,14 +560,48 @@ static void main_loop(const Args& args) {
         bool first_of_tray = pieces.size() == 3;
         if (first_of_tray && helper_ok()) sleep_s(DEAL_SETTLE_MS / 1000.0 - (now() - planned_at));
         if (!check) {
-            double t0 = now(); swipe(sx, sy, dx, dy, repeat >= 1 ? RETRY_MS : drag_ms(sx, sy, dx, dy));
-            if (cleared) clears.push_back({cleared, t0});
-            since = cleared ? 0 : since + 1;
-            trusted = st.after;
+            // v5.8: this drag and the tray's other unchecked drags (all but the last, which is
+            // checked) go to the tablet in one command: one Wi-Fi round trip instead of one each.
+            std::vector<Drag> batch = {{sx, sy, dx, dy, repeat >= 1 ? RETRY_MS : drag_ms(sx, sy, dx, dy)}};
+            std::vector<Step> steps = {st};
+            while (helper_ok() && repeat == 0 && !CHECK_EVERY && plan_seq.size() > 1) {
+                Step s2 = plan_seq.front(); plan_seq.erase(plan_seq.begin());
+                const TrayPiece& q = by_slot[s2.slot];
+                int w2 = 0, h2 = 0; for (auto [a, b] : q.cells) { w2 = std::max(w2, a + 1); h2 = std::max(h2, b + 1); }
+                double qx = q.ox + q.cells[0].first * 50 + 25, qy = q.oy + q.cells[0].second * 50 + 25;
+                auto [ax, ay] = corrections.count(q.cells) ? corrections[q.cells] : std::make_pair(0.0, 0.0);
+                double qdx = qx + (GX + (s2.x + w2 / 2.0) * STEP - (q.ox + w2 * 25.0)) / GAIN + ax;
+                double qdy = qy + (GY + (s2.y + h2 / 2.0) * STEP - args.pickup_y) / GAIN + ay;
+                batch.push_back({qx, qy, qdx, qdy, drag_ms(qx, qy, qdx, qdy)});
+                steps.push_back(s2);
+                turn++; say("\nMove " + std::to_string(turn) + "  (batched)");
+                log("Selected tray " + std::to_string(s2.slot + 1) + ", grid column " + std::to_string(s2.x + 1) + ", row " + std::to_string(s2.y + 1));
+            }
+            // The tray's last drag joins the same command (one round trip less); its check runs
+            // in the next round, which then skips its own first drag (last_predragged).
+            if (helper_ok() && repeat == 0 && !CHECK_EVERY && plan_seq.size() == 1) {
+                const Step& s3 = plan_seq.front(); const TrayPiece& q = by_slot[s3.slot];
+                int w3 = 0, h3 = 0; for (auto [a, b] : q.cells) { w3 = std::max(w3, a + 1); h3 = std::max(h3, b + 1); }
+                double qx = q.ox + q.cells[0].first * 50 + 25, qy = q.oy + q.cells[0].second * 50 + 25;
+                auto [ax, ay] = corrections.count(q.cells) ? corrections[q.cells] : std::make_pair(0.0, 0.0);
+                double qdx = qx + (GX + (s3.x + w3 / 2.0) * STEP - (q.ox + w3 * 25.0)) / GAIN + ax;
+                double qdy = qy + (GY + (s3.y + h3 / 2.0) * STEP - args.pickup_y) / GAIN + ay;
+                batch.push_back({qx, qy, qdx, qdy, drag_ms(qx, qy, qdx, qdy)});
+                last_predragged = true;
+            }
+            double t0 = now(); swipes(batch);
+            for (auto& sk : steps) {
+                u64 pk = 0; for (auto [a, b] : by_slot[sk.slot].cells) pk |= 1ULL << ((sk.y + b) * 8 + sk.x + a);
+                u64 ck = (sk.before | pk) & ~sk.after;
+                if (ck) clears.push_back({ck, t0});
+                since = ck ? 0 : since + 1;
+                trusted = sk.after;
+            }
             char buf[96];
             if (!plan_seq.empty()) {
-                std::vector<TrayPiece> rest; for (auto& q : pieces) if (q.slot != st.slot) rest.push_back(q);
-                carry = rest; snprintf(buf, sizeof buf, "swipe %.2fs", now() - t0); log(buf); continue;
+                std::vector<TrayPiece> rest;
+                for (auto& q : pieces) if (std::none_of(steps.begin(), steps.end(), [&](const Step& sk) { return sk.slot == q.slot; })) rest.push_back(q);
+                carry = rest; snprintf(buf, sizeof buf, "swipe %.2fs (%zu drags)", now() - t0, batch.size()); log(buf); continue;
             }
             predicted = st.after;
             if (pieces.size() == 1) { sleep_s(deal_wait); probe = true; dealing = now(); }  // a new tray is dealt now
@@ -555,7 +619,9 @@ static void main_loop(const Args& args) {
             if (st.x + width == 8 && retry_x > 0) continue;
             if (st.y == 0 && retry_y < 0) continue;
             if (st.y + height == 8 && retry_y > 0) continue;
-            double t0 = now(); swipe(sx, sy, dx + retry_x, dy + retry_y, ms);
+            double t0 = now();
+            if (last_predragged) last_predragged = false;  // already dragged with the rest of the tray
+            else swipe(sx, sy, dx + retry_x, dy + retry_y, ms);
             clears.erase(std::remove_if(clears.begin(), clears.end(), [&](auto& c) { return c.second <= t0 - 2.5; }), clears.end());
             bool last_of_tray = pieces.size() == 1;
             if (last_of_tray) { t_up = now(); t_board = t_read = t_still = -1; if (!helper_ok()) sleep_s(deal_wait); }
@@ -580,7 +646,7 @@ static void main_loop(const Args& args) {
             if (last_of_tray && actual == st.after && helper_ok()) {
                 // The board is right: now only the tray matters until the new pieces hold still.
                 bool leftover = false;
-                if (auto fresh = wait_for_tray(tray_at_plan, leftover)) {
+                if (auto fresh = wait_for_tray(tray_at_plan, leftover, t_up)) {
                     t_read = t_still = now() - t_up;
                     carry = *fresh; new_tray = true; trusted = st.after;
                 } else if (leftover) {
@@ -651,6 +717,10 @@ int main(int argc, char** argv) {
         else if (a == "--check-delay-ms") CHECK_DELAY_MS = (int)val();
         else if (a == "--check-every") CHECK_EVERY = true;
         else if (a == "--tray-hold-ms") TRAY_HOLD_MS = (int)val();
+        else if (a == "--still-ms") STILL_MS = (int)val();
+        else if (a == "--tray-still") TRAY_STILL = true;
+        else if (a == "--tray-frames") TRAY_FRAMES = (int)val();
+        else if (a == "--batch-gap-ms") BATCH_GAP_MS = (int)val();
         else { fprintf(stderr, "unknown option %s\n", a.c_str()); return 2; }
     }
     for (;;) {

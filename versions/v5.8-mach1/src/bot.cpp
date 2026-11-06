@@ -1,4 +1,4 @@
-// v5.8-mach1-exp: v5.7-speedbreaker made faster over Wi-Fi (target 210 moves/min): the tablet itself waits for the new tray to hold still, and a tray's first drags go in one command.
+// v5.8-mach1: v5.7-speedbreaker made faster over Wi-Fi: a tray's drags go to the tablet in one command (40 ms apart), the fast tray check (never before 0.5 s after the last drop), and the result screen is acted on at once.
 // v5.6 brought a faster play loop: drags no longer slow down for good after one miss, and tighter,
 // adjustable timings (--swipe-ms, --gap-ms, --deal-settle-ms, --check-delay-ms). Target set
 // by the user: 170 moves/min. The Block Blast bot in C++. Screenshot -> read board and tray -> plan ->
@@ -280,6 +280,7 @@ static void main_loop(const Args& args) {
     Params params;
     double planned_at = 0;
     bool new_tray = false;  // carry holds a new tray read by wait_for_tray
+    bool last_predragged = false;  // the tray's last drag was sent with the batch
     std::vector<TrayPiece> tray_at_plan;  // the tray as it was when it was planned
     int cells_cap = -1;  // most blocks the board can hold now (blocks at the last plan + that tray's cells)
     std::optional<double> effect_since;
@@ -493,6 +494,7 @@ static void main_loop(const Args& args) {
             if (repeat >= 2 && last_first) failed_moves.push_back(*last_first);
             if (repeat) log("Same position again (" + std::to_string(repeat) + "x): a drop missed; dragging slowly.");
             double t = now(); planned_at = t; tray_at_plan = pieces;
+            last_predragged = false;  // a new plan: nothing of it has been dragged yet
             cells_cap = __builtin_popcountll(*board); for (auto& q : pieces) cells_cap += (int)q.cells.size();
             std::vector<Piece> in; for (auto& p : pieces) in.push_back({p.slot, p.cells});
             auto seq = plan(*board, in, params, failed_moves, since, (uint64_t)turn);
@@ -575,6 +577,18 @@ static void main_loop(const Args& args) {
                 turn++; say("\nMove " + std::to_string(turn) + "  (batched)");
                 log("Selected tray " + std::to_string(s2.slot + 1) + ", grid column " + std::to_string(s2.x + 1) + ", row " + std::to_string(s2.y + 1));
             }
+            // The tray's last drag joins the same command (one round trip less); its check runs
+            // in the next round, which then skips its own first drag (last_predragged).
+            if (helper_ok() && repeat == 0 && !CHECK_EVERY && plan_seq.size() == 1) {
+                const Step& s3 = plan_seq.front(); const TrayPiece& q = by_slot[s3.slot];
+                int w3 = 0, h3 = 0; for (auto [a, b] : q.cells) { w3 = std::max(w3, a + 1); h3 = std::max(h3, b + 1); }
+                double qx = q.ox + q.cells[0].first * 50 + 25, qy = q.oy + q.cells[0].second * 50 + 25;
+                auto [ax, ay] = corrections.count(q.cells) ? corrections[q.cells] : std::make_pair(0.0, 0.0);
+                double qdx = qx + (GX + (s3.x + w3 / 2.0) * STEP - (q.ox + w3 * 25.0)) / GAIN + ax;
+                double qdy = qy + (GY + (s3.y + h3 / 2.0) * STEP - args.pickup_y) / GAIN + ay;
+                batch.push_back({qx, qy, qdx, qdy, drag_ms(qx, qy, qdx, qdy)});
+                last_predragged = true;
+            }
             double t0 = now(); swipes(batch);
             for (auto& sk : steps) {
                 u64 pk = 0; for (auto [a, b] : by_slot[sk.slot].cells) pk |= 1ULL << ((sk.y + b) * 8 + sk.x + a);
@@ -605,7 +619,9 @@ static void main_loop(const Args& args) {
             if (st.x + width == 8 && retry_x > 0) continue;
             if (st.y == 0 && retry_y < 0) continue;
             if (st.y + height == 8 && retry_y > 0) continue;
-            double t0 = now(); swipe(sx, sy, dx + retry_x, dy + retry_y, ms);
+            double t0 = now();
+            if (last_predragged) last_predragged = false;  // already dragged with the rest of the tray
+            else swipe(sx, sy, dx + retry_x, dy + retry_y, ms);
             clears.erase(std::remove_if(clears.begin(), clears.end(), [&](auto& c) { return c.second <= t0 - 2.5; }), clears.end());
             bool last_of_tray = pieces.size() == 1;
             if (last_of_tray) { t_up = now(); t_board = t_read = t_still = -1; if (!helper_ok()) sleep_s(deal_wait); }

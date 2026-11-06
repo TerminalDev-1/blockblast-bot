@@ -33,6 +33,12 @@ void update_layout();
 Image capture(bool full = false);
 // Screenshot of one rectangle in game coordinates (helper: only that part is sent).
 Image capture_rect(int x0, int y0, int x1, int y1);
+// v5.8: a frame of the rectangle once its pixels haven't changed for hold_ms (the tablet
+// waits, so no Wi-Fi round trips while it does); timed_out if timeout_ms passed first.
+Image capture_still(int x0, int y0, int x1, int y1, int hold_ms, int timeout_ms, bool& timed_out);
+struct Drag { double sx, sy, dx, dy; int ms; };
+// v5.8: several drags in one helper command, played back to back on the tablet.
+void swipes(const std::vector<Drag>& drags);
 extern int SHOTS;  // screenshots since the counter was reset
 
 void swipe(double sx, double sy, double dx, double dy, int ms);
@@ -42,7 +48,8 @@ void tap(double x, double y);
 bool helper_ok();
 void helper_restart();
 void release_touch();  // ends a touch the game may still think is down
-extern int GAP_MS;   // pause between one helper drag's lift and the next drag
+extern int GAP_MS;        // pause between one helper drag's lift and the next drag
+extern int BATCH_GAP_MS;  // pause between drags sent together (on the tablet)
 extern int HOLD_MS;  // finger rest on the target before lifting
 std::string helper_dex_path();  // defined by the program (next to its executable)
 

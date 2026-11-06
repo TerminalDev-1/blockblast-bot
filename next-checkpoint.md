@@ -6,11 +6,16 @@ built or tested. Queued checkpoints are done **in version order, lowest number f
 
 ## In progress
 
-### v5.8-mach1-exp
-- Started. **All about speed, over Wi-Fi (the user won't use USB): 210 moves/min.** Automatic game
-  start and game-over recovery are back. See its entry below.
+(nothing in progress)
 
 ## Done
+
+### v5.8-mach1 (released)
+- 174 moves/min live over Wi-Fi (target was 210; ~1.0 s per tray is the Wi-Fi floor). Released by the user's
+  decision, experimental label dropped.
+
+## User's thoughts for later (not confirmed)
+- v5.8-mach1 may be the last main bot for a while; later checkpoints may be experimental variations of the bot.
 
 ### v5.7-speedbreaker (released)
 - 165 moves/min live over Wi-Fi with the safe tray check (target was 200; 211 with a riskier check that
