@@ -42,9 +42,11 @@ static int DEAL_SETTLE_MS = 15;  // a new tray's pieces look settled a moment be
 static int TRAY_HOLD_MS = 30;  // a new tray must read the same at least this long (and in 3 frames)
 static bool DEBUG = getenv("BB_DEBUG") != nullptr;  // save the screen when a check times out
 
-static void save_debug(const std::string& why) {
-    if (!DEBUG) return;
+static void save_debug(const std::string& why, bool always = false) {
+    if (!DEBUG && !always) return;
     std::filesystem::create_directories("debug-frames");
+    int n = 0; for (auto& e : std::filesystem::directory_iterator("debug-frames")) n += e.is_regular_file();
+    if (n >= 40) return;
     std::string name = "debug-frames/" + clock_text() + "-" + why + ".png";
     for (auto& c : name) if (c == ':') c = '-';
     write_png(name, capture(true));
@@ -157,14 +159,9 @@ static void recover_screen(const Image& im) {
         LAST_BACK = now();
         say("Returning from another app or ad (" + pkg + ")."); key_back(); sleep_s(2); return;
     }
-    // The bot never starts a game itself (the user's choice): on the result screen or the
-    // menu it waits until the user starts one, then plays it. Checked every 0.3 s (v5.6: 3 s,
-    // so a new game could sit for up to 3 s before the bot noticed).
-    if (play_button(im) || green_button(im)) {
-        static double said = -1e9;
-        if (now() - said > 60) { say(std::string(play_button(im) ? "Game over" : "Main menu") + ": waiting for you to start a game."); said = now(); }
-        sleep_s(.3); return;
-    }
+    // Game over and menu: start the next game (automatic start is back, the user's choice).
+    if (play_button(im)) { say("Result screen: starting the next game."); tap(1440, 1335); sleep_s(2); return; }
+    if (green_button(im)) { say("Starting Classic."); tap(1440, 1370); sleep_s(2); return; }
     double old = SCALE; update_layout();
     if (SCALE != old) return;  // the navigation bar changed; re-read with the new scale
     if (rating_popup(im)) { say("Closing rating prompt."); tap(1778, 525); sleep_s(2); return; }
@@ -472,7 +469,12 @@ static void main_loop(const Args& args) {
                 if (now() - *stuck_since > 30) {
                     log("No legal moves for 30s without a game-over screen; trying recovery.");
                     save_unknown(); recover_screen(capture()); stuck_since.reset();
-                } else { log("No legal moves; waiting for game-over screen."); sleep_s(.3); }
+                } else {
+                    // Nothing fits on a board that looks fairly open: the board or the tray is
+                    // probably misread (a game ended this way); keep the screen for diagnosis.
+                    if (__builtin_popcountll(*board) < 40) save_debug("no-moves-open-board", true);
+                    log("No legal moves; waiting for game-over screen."); sleep_s(.3);
+                }
             }
             im.reset(); trusted.reset(); continue;
         }
