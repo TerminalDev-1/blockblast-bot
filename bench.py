@@ -34,7 +34,7 @@ VERSIONS = [
     ('v5.1 fast planner', 'f16d74a', 'combo'),
     ('v5.4 highspeed max', '85fa355', 'combo'),
     ('v5.5 cpp max', 'e2f0115', 'cpp'),
-    ('v5.5.1 (experimental)', None, 'cpp'),
+    ('v5.5.1 (experimental)', '2847186', 'cpp'),
 ]
 # Where each C++ version's planner source lives in its commit.
 CPP_SRC = {'v5.5 cpp max': 'versions/v5.5-cpp-max/src', 'v5.5.1 (experimental)': 'versions/v5.5.1-exp/src'}
@@ -45,7 +45,7 @@ LIVE_SPEED = {'v1 original': None, 'v2 bitboard planner': None, 'v3 look-ahead':
               'v5 deeper look-ahead': 94, 'v5.1 fast planner': 87,
               'v5.3 flash max': 100,
               'v5.3.1 flash highspeed max': 122,
-              'v5.4 highspeed max': 100, 'v5.5 cpp max': 139, 'v5.5.1 (experimental)': None}
+              'v5.4 highspeed max': 100, 'v5.5 cpp max': 139, 'v5.5.1 (experimental)': 154}
 
 WINDOW = current.COMBO_WINDOW
 
@@ -200,7 +200,8 @@ def chart(summary, path='benchmark.jpg'):
         bars = ax.bar(range(len(values)), values, color=greens(len(values)), width=.62)
         ax.set_title(title, fontsize=12, loc='left', fontweight='bold', color=text)
         # Version number on the first line, its name wrapped below.
-        ax.set_xticks(range(len(names)), [n.replace(' ', '\n') for n in names], fontsize=8.5, color=dim)
+        ax.set_xticks(range(len(names)), [n.replace(' ', '\n') for n in names],
+                      fontsize=8.5 if len(names) <= 9 else 6.8, color=dim)  # many bars: smaller labels
         for side in ('top', 'right', 'left'): ax.spines[side].set_visible(False)
         ax.spines['bottom'].set_color(grid)
         ax.tick_params(axis='y', labelsize=9, colors=dim, length=0); ax.tick_params(axis='x', length=0)
