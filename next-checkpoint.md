@@ -1,12 +1,12 @@
 # Next checkpoints (hub)
 
 Queue of checkpoint ideas from the user. New ideas go here while another checkpoint is being
-built or tested. When a checkpoint is finished, Claude asks the user which queued one to work
-on next (the user picks; nothing here starts on its own). See the rules in `CLAUDE.md`.
+built or tested. Queued checkpoints are done **in version order, lowest number first**
+(v5.7 before v5.8); Claude asks the user before starting the next one. See the rules in `CLAUDE.md`.
 
 ## In progress
 
-(nothing: ask the user which queued checkpoint is next)
+(nothing yet: next in order is v5.7-speedbreaker)
 
 ## Done
 
@@ -17,7 +17,7 @@ on next (the user picks; nothing here starts on its own). See the rules in `CLAU
 ## Queued
 
 ### v5.7-speedbreaker
-- Name chosen by the user. Start after v5.6-hyperspeed-exp's testing is done (and the user picks it).
+- Name chosen by the user. Next in order (v5.6-hyperspeed is released).
 - Goal: **the pinnacle of speed: 175–180 moves/min**, breaking the ceiling of the v5.5/v5.6 loop
   (~160–170). The fastest checkpoint so far.
 - **A much lighter, more efficient architecture.** Ideas to explore:
@@ -31,7 +31,7 @@ on next (the user picks; nothing here starts on its own). See the rules in `CLAU
 - Provisional until the user approves it (one yes to release, as its name has no `-exp`).
 
 ### v5.8-mach1
-- Name chosen by the user ("v5.8-Mach 1"). After v5.7-speedbreaker (when the user picks it).
+- Name chosen by the user ("v5.8-Mach 1"). Only after v5.7-speedbreaker is done.
 - Goal: **run at the speed ceiling: 210 moves/min** (the user said "210 moves per second"; per
   minute is the ceiling estimated for this game: the deal animation alone takes ~0.5 s per tray,
   so a tray of 3 moves can't take less than ~0.85 s). Confirm the unit with the user when starting.
