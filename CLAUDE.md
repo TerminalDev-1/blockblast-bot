@@ -55,6 +55,7 @@ Plays Block Blast (Classic) on a USB-connected Android tablet (2880x1800 landsca
   - Delete a version folder only when the user says so.
 - **Every new version must update the benchmark**: add it to `VERSIONS` in `bench.py` (label + commit; the working tree is `None` until committed, then pin the commit), put its measured live moves/min (from `bot.log`, 100+ moves) in `LIVE_SPEED` (a speed-only version with the same planner goes only in `LIVE_SPEED`), rerun `python bench.py`, add a row to the README's version table, and commit `benchmark.jpg` and `bench-results.json` with the change.
 - The game is often live: don't stop a running bot unless the user says so. Code changes only take effect after a restart.
+- **Stopping or deliberately failing a run (rule set by the user):** Claude may stop a run, or deliberately end/fail the game, when the run isn't important to the user, but **only with the user's explicit approval each time**: ask first ("May I stop/fail this run?"); after a clear yes, Claude ends it with its own tools.
 - Run live tests detached (`start-bot.ps1`); a foreground run dies when the tool call is interrupted.
 - Unrecognised screens are saved to `unknown-screens/` for calibration.
 - Public repo (GPL v3). Never commit screenshots (`*.png` is ignored; they can show personal info), logs, or `unknown-screens/`.
