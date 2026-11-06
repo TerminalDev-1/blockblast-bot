@@ -179,6 +179,21 @@ def chart(summary, path='benchmark.jpg'):
     import matplotlib.pyplot as plt
     labels = list(summary)
     speed = dict(LIVE_SPEED)
+    commits = {label: commit for label, commit, _ in VERSIONS}
+
+    def tick_label(name):
+        # Experimental checkpoints show when they were made (their commit's date and
+        # time), so a stale benchmark of one is easy to spot.
+        text = name.replace(' ', '\n')
+        if '(experimental)' in name:
+            commit = commits.get(name)
+            when = 'working tree'
+            if commit:
+                when = subprocess.run(['git', 'show', '-s', '--format=%cd', '--date=format-local:%d %b %Y %H:%M', commit],
+                                      capture_output=True, text=True).stdout.strip()
+                when = when[:11] + '\n' + when[12:]  # date, then time below
+            text += '\n' + when
+        return text
     speed_labels = [k for k, v in speed.items() if v]
     panels = [
         ('Moves survived (avg, cap %d)' % next(iter(summary.values()))['cap'], [summary[k]['moves'] for k in labels], labels),
@@ -200,7 +215,7 @@ def chart(summary, path='benchmark.jpg'):
         bars = ax.bar(range(len(values)), values, color=greens(len(values)), width=.62)
         ax.set_title(title, fontsize=12, loc='left', fontweight='bold', color=text)
         # Version number on the first line, its name wrapped below.
-        ax.set_xticks(range(len(names)), [n.replace(' ', '\n') for n in names],
+        ax.set_xticks(range(len(names)), [tick_label(n) for n in names],
                       fontsize=8.5 if len(names) <= 9 else 6.8, color=dim)  # many bars: smaller labels
         for side in ('top', 'right', 'left'): ax.spines[side].set_visible(False)
         ax.spines['bottom'].set_color(grid)
