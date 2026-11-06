@@ -6,11 +6,13 @@ built or tested. Queued checkpoints are done **in version order, lowest number f
 
 ## In progress
 
-### v5.7-speedbreaker
-- Built and tested: **211 moves/min** live (target 200 met), +17% survival on long simulated games
-  vs v5.6. Waiting for the user's QA and release approval (default rule). Details in the README.
+(nothing yet: next in order is v5.8-mach1-exp)
 
 ## Done
+
+### v5.7-speedbreaker (released)
+- 165 moves/min live over Wi-Fi with the safe tray check (target was 200; 211 with a riskier check that
+  lost a game); +17% survival on long simulated games vs v5.6. Released by the user's decision.
 
 ### v5.6-hyperspeed (released)
 - Was v5.6-hyperspeed-exp; released by the user, experimental label dropped. 156 moves/min live

@@ -34,11 +34,22 @@ struct Params {
     double gameover_penalty = 150;  // per piece that doesn't fit in a sampled future
     double combo_scale = 1.0;       // weight of combo bonuses/penalties against safety
     double tail = 0.7;              // weight of the worst quarter of futures (v5.5: 0, plain average)
+    int look_depth = 1;             // future trays played per sample on an open board
     int danger_depth = 2;           // future trays played per sample when the board is crowded (v5.5: 1)
     int threads = 0;            // look-ahead threads (0 = all cores but one)
 };
 
 extern const int COMBO_WINDOW;
+
+// Board score weights (fast_eval / fit_eval). v5.7 tuned them with sim.exe (one at a time at
+// 0.6x / 1.5x, then combined): smooth edges and no holes matter more, raw empty space less.
+// On 64 fresh games up to 3000 moves: 2090 moves on average vs 1788 with the old weights
+// (empty 1.0, hole 6.0, trans 0.45), 28 vs 23 games lasting all 3000 moves.
+struct EvalWeights {
+    double empty = 0.6, hole = 9.0, pocket = 1.5, trans = 0.675, square3 = 7.0, line5 = 4.0;
+    double risk = 120.0, room = 6.0;
+};
+extern EvalWeights EVAL;
 
 // Shapes the game deals, with their probabilities.
 struct Shape { Cells cells; std::vector<u64> masks; std::vector<std::pair<int, int>> xy; double prob; };

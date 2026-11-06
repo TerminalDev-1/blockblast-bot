@@ -100,6 +100,8 @@ std::pair<u64, int> drop(u64 board, u64 mask) {
     return {nb & ~cleared, __builtin_popcountll(r) + __builtin_popcountll(c)};
 }
 
+EvalWeights EVAL;
+
 static inline int pc(u64 x) { return __builtin_popcountll(x); }
 
 // Cheap board score: open space, few single holes, smooth edges, room for big pieces.
@@ -110,11 +112,12 @@ double fast_eval(u64 b) {
     int holes = pc(e & left & right & up & down);
     int pockets = pc(e & ((left & right & (up | down)) | (up & down & (left | right)))) - holes;
     int trans = pc((b ^ (b >> 1)) & ~COL7) + pc((b ^ (b >> 8)) & ~ROW7);
-    double score = pc(e) * 1.0 - holes * 6.0 - pockets * 1.5 - trans * 0.45;
+    const EvalWeights& w = EVAL;
+    double score = pc(e) * w.empty - holes * w.hole - pockets * w.pocket - trans * w.trans;
     u64 h3 = e & (e >> 1) & (e >> 2) & X_LE5;
-    if (h3 & (h3 >> 8) & (h3 >> 16)) score += 7;  // room for a 3x3
+    if (h3 & (h3 >> 8) & (h3 >> 16)) score += w.square3;  // room for a 3x3
     if ((e & (e >> 1) & (e >> 2) & (e >> 3) & (e >> 4) & X_LE3) || (e & (e >> 8) & (e >> 16) & (e >> 24) & (e >> 32)))
-        score += 4;  // room for a 1x5
+        score += w.line5;  // room for a 1x5
     return score;
 }
 
@@ -127,7 +130,7 @@ double fit_eval(u64 b) {
         if (n == 0) risk += s.prob;
         room += s.prob * std::log1p((double)n);
     }
-    return fast_eval(b) - 120.0 * risk + 6.0 * room;
+    return fast_eval(b) - EVAL.risk * risk + EVAL.room * room;
 }
 
 static double clear_reward(int lines) { return 3.0 * lines * lines; }
@@ -302,7 +305,7 @@ std::vector<Move> plan(u64 board, const std::vector<Piece>& in, const Params& p,
     }
     int filled = pc(ranked[0].second.board);
     int lookahead = p.lookahead, candidates = p.candidates;
-    int depth = 1;
+    int depth = p.look_depth;
     if (filled >= p.danger_from) { lookahead = std::max(lookahead, p.danger_lookahead); candidates = std::max(candidates, p.danger_candidates); depth = p.danger_depth; }
     if (lookahead > 0 && ranked.size() > 1 && filled >= p.min_filled) {
         if ((int)ranked.size() > candidates) ranked.resize(candidates);

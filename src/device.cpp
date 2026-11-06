@@ -16,7 +16,7 @@ namespace bb {
 
 double SCALE = 1.0;
 int SHOTS = 0;
-int GAP_MS = 30;
+int GAP_MS = 15;
 int HOLD_MS = 0;
 static std::string SERIAL;
 static double SLOW = 1;  // timeouts are stretched over Wi-Fi
@@ -132,16 +132,22 @@ void open_app(const std::string& package) {
 
 void key_back() { adb({"shell", "input", "keyevent", "BACK"}); }
 
+std::string focused_window() {
+    std::string out = adb({"shell", "dumpsys", "window"}, 20, false);
+    // The first mCurrentFocus line with a window (dumpsys lists one per display).
+    std::smatch m;
+    for (size_t at = out.find("mCurrentFocus="); at != std::string::npos; at = out.find("mCurrentFocus=", at + 1)) {
+        std::string line = out.substr(at, out.find('\n', at) - at);
+        if (std::regex_search(line, m, std::regex(R"( u\d+ ([\w.$/]+)\})"))) return m[1];
+    }
+    return "";
+}
+
 std::string focused_package() {
     // The game's own dialogs (e.g. its "Leave now?" prompt) are named by the package alone,
     // without "/activity"; v5.4 took them for another app and kept pressing Back.
-    std::string out = adb({"shell", "dumpsys", "window"}, 20, false);
-    size_t at = out.find("mCurrentFocus=");
-    if (at == std::string::npos) return "";
-    std::string line = out.substr(at, out.find('\n', at) - at);
-    std::smatch m;
-    if (std::regex_search(line, m, std::regex(R"( u\d+ ([\w.]+)[/}])"))) return m[1];
-    return "";
+    std::string w = focused_window();
+    return w.substr(0, w.find('/'));
 }
 
 bool close_accessible_ad() {
@@ -331,10 +337,11 @@ static Image to_game(const Image& screen, double scale, int x0, int y0, int x1, 
     return out;
 }
 
-Image capture(bool full) {
+Image capture(bool full) { return full ? capture_rect(0, 0, W, H) : capture_rect(RX0, RY0, RX1, RY1); }
+
+Image capture_rect(int x0, int y0, int x1, int y1) {
     SHOTS++;
     Image im;
-    int x0 = full ? 0 : RX0, y0 = full ? 0 : RY0, x1 = full ? W : RX1, y1 = full ? H : RY1;
     if (helper_ok() || helper_start()) {
         try {
             if (SCALE == 1.0) im = helper_frame(x0, y0, x1, y1);

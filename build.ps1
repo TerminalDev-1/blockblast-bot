@@ -1,5 +1,5 @@
-# Builds v5.6-hyperspeed with MinGW-w64 g++ (winget install BrechtSanders.WinLibs.POSIX.UCRT):
-#   bbbot.exe       the bot (start-bot.ps1 -Version v5.6-hyperspeed runs it)
+# Builds v5.7-speedbreaker with MinGW-w64 g++ (winget install BrechtSanders.WinLibs.POSIX.UCRT):
+#   bbbot.exe       the bot (start-bot.ps1 -Version v5.7-speedbreaker runs it)
 #   build\sim.exe   offline planner benchmark (sim.exe 96 1500 7000 [v51|v54|name=value...])
 #   build\bbplan.dll  the planner for bench.py
 # The tablet helper is built separately: helper\build-helper.ps1.

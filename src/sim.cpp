@@ -59,7 +59,10 @@ static bool set_param(Params& p, const std::string& kv) {
     else if (k == "danger_from") p.danger_from = (int)v; else if (k == "danger_lookahead") p.danger_lookahead = (int)v;
     else if (k == "danger_candidates") p.danger_candidates = (int)v; else if (k == "look_width") p.look_width = (int)v;
     else if (k == "look_combo") p.look_combo = v != 0; else if (k == "threads") p.threads = (int)v; else if (k == "gameover_penalty") p.gameover_penalty = v;
-    else if (k == "combo_scale") p.combo_scale = v; else if (k == "tail") p.tail = v; else if (k == "danger_depth") p.danger_depth = (int)v; else if (k == "fit_weight") p.fit_weight = v;
+    else if (k == "combo_scale") p.combo_scale = v; else if (k == "tail") p.tail = v; else if (k == "danger_depth") p.danger_depth = (int)v; else if (k == "look_depth") p.look_depth = (int)v; else if (k == "fit_weight") p.fit_weight = v;
+    else if (k == "w_empty") EVAL.empty = v; else if (k == "w_hole") EVAL.hole = v; else if (k == "w_pocket") EVAL.pocket = v;
+    else if (k == "w_trans") EVAL.trans = v; else if (k == "w_square3") EVAL.square3 = v; else if (k == "w_line5") EVAL.line5 = v;
+    else if (k == "w_risk") EVAL.risk = v; else if (k == "w_room") EVAL.room = v;
     else return false;
     return true;
 }
