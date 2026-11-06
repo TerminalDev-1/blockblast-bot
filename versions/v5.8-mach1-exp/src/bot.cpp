@@ -39,6 +39,9 @@ static const double CONFIRM_GAP = .08;     // helper: time between two reads tha
 static bool CHECK_EVERY = false;  // --check-every: check every drop (v5.5 behaviour)
 static int CHECK_DELAY_MS = 15;  // helper: wait before the first check frame (the game needs a moment to draw a drop)
 static int DEAL_SETTLE_MS = 15;  // a new tray's pieces look settled a moment before the game takes drags
+static double EARLIEST_DEAL = 0.5;  // s after the last drop before a new tray can be accepted
+static bool TRAY_STILL = false;  // --tray-still: let the tablet wait for the tray to hold still
+static int TRAY_FRAMES = 2;  // agreeing frames needed to accept a new tray (v5.7: 3)
 static int STILL_MS = 60;  // v5.8: tray pixels unchanged this long = the new pieces are in place
 static int TRAY_HOLD_MS = 30;  // a new tray must read the same at least this long (and in 3 frames)
 static bool DEBUG = getenv("BB_DEBUG") != nullptr;  // save the screen when a check times out
@@ -69,7 +72,7 @@ static std::string TRACE;
 // frames 100 ms apart, are the new tray (pieces read as other shapes while they grow
 // in). Pieces of the old tray at rest, still for 120 ms, mean a drop missed although the board
 // check accepted it (line-clear effects can hide cells): leftover is set and nothing returned.
-static std::optional<std::vector<TrayPiece>> wait_for_tray(const std::vector<TrayPiece>& old_tray, bool& leftover, double timeout = 1.2) {
+static std::optional<std::vector<TrayPiece>> wait_for_tray(const std::vector<TrayPiece>& old_tray, bool& leftover, double dropped_at, double timeout = 1.2) {
     std::vector<TrayPiece> prev; long long prev_frame = -2; double prev_at = 0, start = now();
     int agree = 0;
     leftover = false;
@@ -78,11 +81,12 @@ static std::optional<std::vector<TrayPiece>> wait_for_tray(const std::vector<Tra
         return false;
     };
     while (now() - start < timeout) {
-        // v5.8: the tablet waits until the tray's pixels hold still (growing pieces change every
-        // frame), so one Wi-Fi transfer per check instead of a stream of frames.
-        bool to = false;
-        Image t = capture_still(RX0, 1285, RX1, RY1, STILL_MS, (int)std::max(50.0, (timeout - (now() - start)) * 1000), to);
-        if (t.frame >= 0 && t.frame == prev_frame && to) { continue; }
+        // Default: a stream of tray-only frames. --tray-still: the tablet waits until the tray's
+        // pixels hold still (tested: no faster over Wi-Fi than the stream).
+        bool to = !TRAY_STILL;
+        Image t = TRAY_STILL ? capture_still(RX0, 1285, RX1, RY1, STILL_MS, (int)std::max(50.0, (timeout - (now() - start)) * 1000), to)
+                             : capture_rect(RX0, 1285, RX1, RY1);
+        if (t.frame >= 0 && t.frame == prev_frame) { if (!TRAY_STILL) sleep_s(.004); continue; }
         std::vector<TrayPiece> ps;
         try { ps = read_pieces(t); } catch (UnreadableTray&) { prev.clear(); prev_frame = t.frame; continue; }
         bool ok = !ps.empty();
@@ -95,15 +99,19 @@ static std::optional<std::vector<TrayPiece>> wait_for_tray(const std::vector<Tra
         bool same = ok && prev.size() == ps.size();
         for (size_t i = 0; same && i < ps.size(); i++)
             same = ps[i].slot == prev[i].slot && ps[i].cells == prev[i].cells && std::abs(ps[i].ox - prev[i].ox) <= 1 && std::abs(ps[i].oy - prev[i].oy) <= 1;
-        // Three different frames in a row that agree (and at least TRAY_HOLD_MS). Logged over 247
-        // deals, 205 wrong readings that looked valid each lasted a single frame; a two-frame
-        // wrong reading once lost a game (three 3x3s), so one more frame of margin.
+        // TRAY_FRAMES different frames in a row that agree (and at least TRAY_HOLD_MS). v5.8 uses 2,
+        // the user's choice for speed: logged over 247 deals, wrong-but-valid readings lasted a
+        // single frame, but a two-frame misread (three 3x3s) once lost a game; v5.7 uses 3.
         agree = same ? agree + 1 : 1;
-        if (same && ps.size() == 3 && agree >= 3 && now() - prev_at >= TRAY_HOLD_MS / 1000.0) return ps;
+        // Never before EARLIEST_DEAL after the last drop: half-grown pieces once read the same in two
+        // frames at 0.42 s, the bot planned with wrong pieces and the game was lost; the real
+        // pieces are only complete at ~0.6 s.
+        if (same && ps.size() == 3 && agree >= TRAY_FRAMES && now() - prev_at >= TRAY_HOLD_MS / 1000.0 &&
+            now() - dropped_at >= EARLIEST_DEAL) return ps;
         // A pixel-still frame (STILL_MS without any change) can't be a growing piece.
         if (ok && !to && ps.size() == 3) return ps;
         if (ok && !to && ps.size() < 3 && std::all_of(ps.begin(), ps.end(), from_old)) { leftover = true; return std::nullopt; }
-        if (ps.empty() && !to) sleep_s(.01);  // empty tray holding still: the deal hasn't started
+        if (TRAY_STILL && ps.empty() && !to) sleep_s(.01);  // empty tray holding still: the deal hasn't started
         if (same && ps.size() < 3 && std::all_of(ps.begin(), ps.end(), from_old) && now() - prev_at >= .12) { leftover = true; return std::nullopt; }
         if (!same) { prev = ok ? ps : std::vector<TrayPiece>{}; prev_at = now(); }
         prev_frame = t.frame;
@@ -168,8 +176,8 @@ static void recover_screen(const Image& im) {
         say("Returning from another app or ad (" + pkg + ")."); key_back(); sleep_s(2); return;
     }
     // Game over and menu: start the next game (automatic start is back, the user's choice).
-    if (play_button(im)) { say("Result screen: starting the next game."); tap(1440, 1335); sleep_s(2); return; }
-    if (green_button(im)) { say("Starting Classic."); tap(1440, 1370); sleep_s(2); return; }
+    if (play_button(im)) { say("Result screen: starting the next game."); tap(1440, 1335); sleep_s(.5); return; }
+    if (green_button(im)) { say("Starting Classic."); tap(1440, 1370); sleep_s(.5); return; }
     double old = SCALE; update_layout();
     if (SCALE != old) return;  // the navigation bar changed; re-read with the new scale
     if (rating_popup(im)) { say("Closing rating prompt."); tap(1778, 525); sleep_s(2); return; }
@@ -292,19 +300,28 @@ static void main_loop(const Args& args) {
         std::optional<u64> board;
         bool pieces_known = false;
         bool fresh_tray = false;
-        if (carry) {
-            // Mid-tray without a check, or a new tray already read by wait_for_tray: the board
-            // is known (from the plan, checked by the last drop).
+        if (carry && !new_tray) {
+            // Mid-tray without a check: the board is known from the plan.
             board = trusted; pieces = *carry; carry.reset(); pieces_known = true;
-            fresh_tray = new_tray; new_tray = false;
             by_slot.clear(); for (auto& p : pieces) by_slot[p.slot] = p;
         } else {
+            if (carry) {
+                // A new tray read by wait_for_tray. Before planning it, the board itself is
+                // compared with the expected one on a fresh board-only frame (below), as every
+                // tray was until v5.7: without it small errors piled up over trays and the bot
+                // planned on a picture far emptier than the real board (games died early).
+                pieces = *carry; carry.reset(); pieces_known = true; fresh_tray = true; new_tray = false;
+                by_slot.clear(); for (auto& p : pieces) by_slot[p.slot] = p;
+                im = capture_rect(RX0, RY0, RX1, GY + 8 * STEP + 2);
+            }
             if (!im) im = capture();
             if (trusted) {
                 // Known board (lines may still be clearing, text may cover part of it):
                 // just confirm the visible cells agree.
                 clears.erase(std::remove_if(clears.begin(), clears.end(), [](auto& c) { return c.second <= now() - 2.5; }), clears.end());
-                u64 res = recent_clears(2.5), recent = recent_clears(1.5);
+                // Cells of lines expected to clear are skipped only while the clear animates
+                // (1.6 s; was 2.5 s): if the line didn't really clear, its blocks must show up.
+                u64 res = recent_clears(1.6), recent = recent_clears(1.5);
                 Visible v = visible_board(*im, FULL & ~*trusted & ~res);
                 if (!v.ok) { trusted.reset(); why.push_back("hidden"); }
                 else {
@@ -313,6 +330,21 @@ static void main_loop(const Args& args) {
                     // drawn in flat letters that look like blocks).
                     u64 seen = v.visible & ~res, missing = *trusted & ~v.board & seen, extra = v.board & ~*trusted & seen;
                     u64 confirmed = recent ? 0 : extra;
+                    if (recent && extra) {
+                        // v5.8: extra blocks right after a clear used to be ignored (combo text
+                        // looks like blocks), so real blocks missing from the picture were never
+                        // added back and games died. Blocks seen again in a second frame 60 ms
+                        // later are real (the text moves); a phantom block costs less than a
+                        // missing real one.
+                        sleep_s(.06);
+                        Image im2 = capture_rect(RX0, RY0, RX1, GY + 8 * STEP + 2);
+                        Visible v2 = visible_board(im2, FULL & ~*trusted & ~res);
+                        // Combo text ("Combo 15", "Perfect!") holds still too and reads as 1-3
+                        // blocks; a line that didn't clear or misplaced pieces leave 4+, which
+                        // then trigger a careful re-read of the whole board.
+                        u64 persistent = v2.ok ? extra & v2.board & v2.visible : 0;
+                        if (__builtin_popcountll(persistent) >= 4) confirmed = persistent;
+                    }
                     if (__builtin_popcountll(missing | confirmed) >= 4) {
                         // The picture or this screenshot is badly off: read the board from two
                         // screenshots that agree before planning again.
@@ -324,11 +356,23 @@ static void main_loop(const Args& args) {
                             log("Board corrected from the screen (" + std::to_string(__builtin_popcountll(missing)) + " gone, " +
                                 std::to_string(__builtin_popcountll(confirmed)) + " added).");
                             trusted = (*trusted & ~missing) | confirmed; predicted = trusted;
+                            if (confirmed) {
+                                // Keep the frame the decision was made on (diagnosis: real blocks or effects?).
+                                std::filesystem::create_directories("debug-frames");
+                                char hx[96]; snprintf(hx, sizeof hx, "debug-frames/%s-added-%016llx.png", clock_text().c_str(), (unsigned long long)confirmed);
+                                std::string name = hx; for (auto& c : name) if (c == ':') c = '-';
+                                write_png(name, *im);
+                            }
                         }
                         board = trusted;
                     }
                 }
             }
+        }
+        if (!board && !is_board(*im) && args.play && (play_button(*im) || green_button(*im))) {
+            // The result screen or the menu: act at once (v5.7 first waited 3 s like for any
+            // unknown screen, the pause before each new game).
+            recover_screen(*im); im.reset(); plan_seq.clear(); trusted.reset(); predicted.reset(); clears.clear(); continue;
         }
         if (!board && !is_board(*im)) {
             if (!args.play) { say("Not on the game board."); return; }
@@ -341,6 +385,10 @@ static void main_loop(const Args& args) {
             recover_screen(capture()); im.reset(); continue;
         }
         unknown_since.reset(); saved_unknown = false;
+        if (fresh_tray && !board) {
+            // The board check above found a big difference: plan on the board the screen shows.
+            board = read_board(*im);
+        }
         if (!pieces_known) {
             if (!board) {
                 board = read_board(*im);
@@ -582,7 +630,7 @@ static void main_loop(const Args& args) {
             if (last_of_tray && actual == st.after && helper_ok()) {
                 // The board is right: now only the tray matters until the new pieces hold still.
                 bool leftover = false;
-                if (auto fresh = wait_for_tray(tray_at_plan, leftover)) {
+                if (auto fresh = wait_for_tray(tray_at_plan, leftover, t_up)) {
                     t_read = t_still = now() - t_up;
                     carry = *fresh; new_tray = true; trusted = st.after;
                 } else if (leftover) {
@@ -654,6 +702,8 @@ int main(int argc, char** argv) {
         else if (a == "--check-every") CHECK_EVERY = true;
         else if (a == "--tray-hold-ms") TRAY_HOLD_MS = (int)val();
         else if (a == "--still-ms") STILL_MS = (int)val();
+        else if (a == "--tray-still") TRAY_STILL = true;
+        else if (a == "--tray-frames") TRAY_FRAMES = (int)val();
         else if (a == "--batch-gap-ms") BATCH_GAP_MS = (int)val();
         else { fprintf(stderr, "unknown option %s\n", a.c_str()); return 2; }
     }

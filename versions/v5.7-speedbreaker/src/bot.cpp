@@ -284,19 +284,28 @@ static void main_loop(const Args& args) {
         std::optional<u64> board;
         bool pieces_known = false;
         bool fresh_tray = false;
-        if (carry) {
-            // Mid-tray without a check, or a new tray already read by wait_for_tray: the board
-            // is known (from the plan, checked by the last drop).
+        if (carry && !new_tray) {
+            // Mid-tray without a check: the board is known from the plan.
             board = trusted; pieces = *carry; carry.reset(); pieces_known = true;
-            fresh_tray = new_tray; new_tray = false;
             by_slot.clear(); for (auto& p : pieces) by_slot[p.slot] = p;
         } else {
+            if (carry) {
+                // A new tray read by wait_for_tray. Before planning it, the board itself is
+                // compared with the expected one on a fresh board-only frame (below), as every
+                // tray was until v5.7: without it small errors piled up over trays and the bot
+                // planned on a picture far emptier than the real board (games died early).
+                pieces = *carry; carry.reset(); pieces_known = true; fresh_tray = true; new_tray = false;
+                by_slot.clear(); for (auto& p : pieces) by_slot[p.slot] = p;
+                im = capture_rect(RX0, RY0, RX1, GY + 8 * STEP + 2);
+            }
             if (!im) im = capture();
             if (trusted) {
                 // Known board (lines may still be clearing, text may cover part of it):
                 // just confirm the visible cells agree.
                 clears.erase(std::remove_if(clears.begin(), clears.end(), [](auto& c) { return c.second <= now() - 2.5; }), clears.end());
-                u64 res = recent_clears(2.5), recent = recent_clears(1.5);
+                // Cells of lines expected to clear are skipped only while the clear animates
+                // (1.6 s; was 2.5 s): if the line didn't really clear, its blocks must show up.
+                u64 res = recent_clears(1.6), recent = recent_clears(1.5);
                 Visible v = visible_board(*im, FULL & ~*trusted & ~res);
                 if (!v.ok) { trusted.reset(); why.push_back("hidden"); }
                 else {
@@ -305,6 +314,21 @@ static void main_loop(const Args& args) {
                     // drawn in flat letters that look like blocks).
                     u64 seen = v.visible & ~res, missing = *trusted & ~v.board & seen, extra = v.board & ~*trusted & seen;
                     u64 confirmed = recent ? 0 : extra;
+                    if (recent && extra) {
+                        // v5.8: extra blocks right after a clear used to be ignored (combo text
+                        // looks like blocks), so real blocks missing from the picture were never
+                        // added back and games died. Blocks seen again in a second frame 60 ms
+                        // later are real (the text moves); a phantom block costs less than a
+                        // missing real one.
+                        sleep_s(.06);
+                        Image im2 = capture_rect(RX0, RY0, RX1, GY + 8 * STEP + 2);
+                        Visible v2 = visible_board(im2, FULL & ~*trusted & ~res);
+                        // Combo text ("Combo 15", "Perfect!") holds still too and reads as 1-3
+                        // blocks; a line that didn't clear or misplaced pieces leave 4+, which
+                        // then trigger a careful re-read of the whole board.
+                        u64 persistent = v2.ok ? extra & v2.board & v2.visible : 0;
+                        if (__builtin_popcountll(persistent) >= 4) confirmed = persistent;
+                    }
                     if (__builtin_popcountll(missing | confirmed) >= 4) {
                         // The picture or this screenshot is badly off: read the board from two
                         // screenshots that agree before planning again.
@@ -333,6 +357,10 @@ static void main_loop(const Args& args) {
             recover_screen(capture()); im.reset(); continue;
         }
         unknown_since.reset(); saved_unknown = false;
+        if (fresh_tray && !board) {
+            // The board check above found a big difference: plan on the board the screen shows.
+            board = read_board(*im);
+        }
         if (!pieces_known) {
             if (!board) {
                 board = read_board(*im);
