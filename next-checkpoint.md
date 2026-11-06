@@ -6,7 +6,8 @@ built or tested. Queued checkpoints are done **in version order, lowest number f
 
 ## In progress
 
-(nothing yet: next in order is v5.7-speedbreaker)
+### v5.7-speedbreaker
+- Started (the user picked it; v5.6 stopped). See its entry below for the goals.
 
 ## Done
 
@@ -18,20 +19,20 @@ built or tested. Queued checkpoints are done **in version order, lowest number f
 
 ### v5.7-speedbreaker
 - Name chosen by the user. Next in order (v5.6-hyperspeed is released).
-- Goal: **the pinnacle of speed: 175–180 moves/min**, breaking the ceiling of the v5.5/v5.6 loop
-  (~160–170). The fastest checkpoint so far.
+- Goal (raised by the user): **200 moves/min**, clearly faster than v5.6-hyperspeed (156), breaking the
+  ceiling of the v5.5/v5.6 loop. The fastest checkpoint so far.
 - **A much lighter, more efficient architecture.** Ideas to explore:
   - plan while the next tray's deal animation is still finishing (the deal, ~0.5 s per tray, is
     the one cost the game imposes);
   - overlap each drag with the previous drop's check (a second helper connection);
   - a leaner main loop: fewer screenshots per tray, nothing that waits without a reason.
-- **The most intelligent checkpoint yet:** excel at long-horizon survival (beat v5.5.1-exp's
+- **Far more intelligent than v5.6 ("ridiculously" more, in the user's words):** excel at long-horizon survival (beat v5.5.1-exp's
   simulator results: 54 of 128 games lasting 3000 moves) while keeping breakneck speed. Use the
   spare planning time (planning is ~3 ms of a ~1 s tray) for a deeper search.
 - Provisional until the user approves it (one yes to release, as its name has no `-exp`).
 
-### v5.8-mach1
-- Name chosen by the user ("v5.8-Mach 1"). Only after v5.7-speedbreaker is done.
+### v5.8-mach1-exp
+- Name chosen by the user ("v5.8-Mach 1"); `-exp` added (new checkpoints are experimental by default from v5.8 on). Only after v5.7-speedbreaker is done.
 - Goal: **run at the speed ceiling: 210 moves/min** (the user said "210 moves per second"; per
   minute is the ceiling estimated for this game: the deal animation alone takes ~0.5 s per tray,
   so a tray of 3 moves can't take less than ~0.85 s). Confirm the unit with the user when starting.
