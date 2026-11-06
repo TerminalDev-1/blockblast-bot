@@ -35,9 +35,11 @@ VERSIONS = [
     ('v5.4 highspeed max', '85fa355', 'combo'),
     ('v5.5 cpp max', 'e2f0115', 'cpp'),
     ('v5.5.1 (experimental)', '2847186', 'cpp'),
+    ('v5.7 speedbreaker (experimental)', '82bbd9d', 'cpp'),
 ]
 # Where each C++ version's planner source lives in its commit.
-CPP_SRC = {'v5.5 cpp max': 'versions/v5.5-cpp-max/src', 'v5.5.1 (experimental)': 'versions/v5.5.1-exp/src'}
+CPP_SRC = {'v5.5 cpp max': 'versions/v5.5-cpp-max/src', 'v5.5.1 (experimental)': 'versions/v5.5.1-exp/src',
+            'v5.7 speedbreaker (experimental)': 'versions/v5.7-speedbreaker/src'}
 # Measured on the tablet (moves/min from bot.log over 100+ moves). None = not measured.
 LIVE_SPEED = {'v1 original': None, 'v2 bitboard planner': None, 'v3 look-ahead': 29,
               'v3.1 line-clear skip': 39, 'v4 combos': 50,
@@ -46,7 +48,8 @@ LIVE_SPEED = {'v1 original': None, 'v2 bitboard planner': None, 'v3 look-ahead':
               'v5.3 flash max': 100,
               'v5.3.1 flash highspeed max': 122,
               'v5.4 highspeed max': 100, 'v5.5 cpp max': 139, 'v5.5.1 (experimental)': 154,
-              'v5.6 hyperspeed': 156}  # same planner as v5.5.1: speed only
+              'v5.6 hyperspeed': 156,  # same planner as v5.5.1: speed only
+              'v5.7 speedbreaker (experimental)': 211}
 
 WINDOW = current.COMBO_WINDOW
 

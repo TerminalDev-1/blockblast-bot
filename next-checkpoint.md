@@ -7,7 +7,8 @@ built or tested. Queued checkpoints are done **in version order, lowest number f
 ## In progress
 
 ### v5.7-speedbreaker
-- Started (the user picked it; v5.6 stopped). See its entry below for the goals.
+- Built and tested: **211 moves/min** live (target 200 met), +17% survival on long simulated games
+  vs v5.6. Waiting for the user's QA and release approval (default rule). Details in the README.
 
 ## Done
 

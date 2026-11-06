@@ -97,5 +97,16 @@
   "mean_streak": 31.25242718446602,
   "live_moves_per_min": 154,
   "commit": "2847186"
+ },
+ "v5.7 speedbreaker (experimental)": {
+  "games": 24,
+  "cap": 300,
+  "moves": 275.125,
+  "reached_cap": 20,
+  "lines_per_100": 48.32651824928063,
+  "best_streak": 78.0,
+  "mean_streak": 38.921052631578945,
+  "live_moves_per_min": 211,
+  "commit": "82bbd9d"
  }
 }
