@@ -6,11 +6,13 @@ on next (the user picks; nothing here starts on its own). See the rules in `CLAU
 
 ## In progress
 
-### v5.6-hyperspeed-exp
-- Built on v5.5.1-exp. Target set by the user: **170 moves/min** (visible gameplay, measured live).
-- Status: being tested live. Drags no longer slow down for good after one miss; tighter timings
-  (70 ms drags, 30 ms pause, 30 ms tray settle, 15 ms check delay); a tray's first drops go
-  straight after each other and the last drop's check verifies the whole board.
+(nothing: ask the user which queued checkpoint is next)
+
+## Done
+
+### v5.6-hyperspeed (released)
+- Was v5.6-hyperspeed-exp; released by the user, experimental label dropped. 156 moves/min live
+  (target was 170; released at 156 by the user's decision).
 
 ## Queued
 

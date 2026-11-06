@@ -45,7 +45,8 @@ LIVE_SPEED = {'v1 original': None, 'v2 bitboard planner': None, 'v3 look-ahead':
               'v5 deeper look-ahead': 94, 'v5.1 fast planner': 87,
               'v5.3 flash max': 100,
               'v5.3.1 flash highspeed max': 122,
-              'v5.4 highspeed max': 100, 'v5.5 cpp max': 139, 'v5.5.1 (experimental)': 154}
+              'v5.4 highspeed max': 100, 'v5.5 cpp max': 139, 'v5.5.1 (experimental)': 154,
+              'v5.6 hyperspeed': 156}  # same planner as v5.5.1: speed only
 
 WINDOW = current.COMBO_WINDOW
 
