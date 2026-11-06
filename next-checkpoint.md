@@ -14,8 +14,13 @@ built or tested. Queued checkpoints are done **in version order, lowest number f
 - 174 moves/min live over Wi-Fi (target was 210; ~1.0 s per tray is the Wi-Fi floor). Released by the user's
   decision, experimental label dropped.
 
-## User's thoughts for later (not confirmed)
-- v5.8-mach1 may be the last main bot for a while; later checkpoints may be experimental variations of the bot.
+## Plans the user mentioned (2026-11-06)
+- Mainline releases continue (the user is **not** abandoning released main bots).
+- The user may also produce more **experimental checkpoints that are variations of the bot**, likely
+  **based on v5.8-mach1**: anything goes, e.g. a slower or faster play loop, a slower (deeper) or
+  faster planner.
+- **Each experimental checkpoint goes in its own folder (`versions/<name>-exp/`) and carries the
+  experimental label** (`-exp` in the name, "(experimental)" with date and time in the benchmark).
 
 ### v5.7-speedbreaker (released)
 - 165 moves/min live over Wi-Fi with the safe tray check (target was 200; 211 with a riskier check that
