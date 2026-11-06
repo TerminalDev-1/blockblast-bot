@@ -15,7 +15,7 @@ built or tested. Queued checkpoints are done **in version order, lowest number f
   decision, experimental label dropped.
 
 ## Plans the user mentioned (2026-11-06)
-- Mainline releases continue (the user is **not** abandoning released main bots).
+- Mainline releases continue (the user is **not** abandoning released main bots), but **less often** than so far.
 - The user may also produce more **experimental checkpoints that are variations of the bot**, likely
   **based on v5.8-mach1**: anything goes, e.g. a slower or faster play loop, a slower (deeper) or
   faster planner.
