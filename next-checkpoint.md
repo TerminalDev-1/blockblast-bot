@@ -85,5 +85,5 @@ built or tested. Queued checkpoints are done **in version order, lowest number f
 - Goals (user): **efficient to train** (small and fast, little training time) and it must **at least
   beat v5.9-flash** (simulator survival 2166 moves avg over 256 games up to 3000 moves; 175 moves/min
   live).
-- Plays the real Block Blast game on the tablet like every version (the 8x8 Agent client is not used).
+- Plays the real Block Blast game on the tablet like every version.
 - Ask the user for the exact version name before starting.
