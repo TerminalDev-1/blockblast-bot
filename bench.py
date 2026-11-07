@@ -36,14 +36,14 @@ VERSIONS = [
     ('v5.5 cpp max', 'e2f0115', 'cpp'),
     ('v5.5.1 (experimental)', '2847186', 'cpp'),
     ('v5.7 speedbreaker', '82bbd9d', 'cpp'),
-    ('v5.9 trained (experimental)', '70c481b', 'cpp'),
+    ('v5.9 flash', '0cbd373', 'cpp'),
 ]
 # Where each C++ version's planner source lives in its commit.
 CPP_SRC = {'v5.5 cpp max': 'versions/v5.5-cpp-max/src', 'v5.5.1 (experimental)': 'versions/v5.5.1-exp/src',
             'v5.7 speedbreaker': 'versions/v5.7-speedbreaker/src',
-            'v5.9 trained (experimental)': 'versions/v5.9-trained-exp/src'}
+            'v5.9 flash': 'versions/v5.9-flash/src'}
 # Extra source files a C++ version's planner needs (v5.9: the trained value network).
-CPP_EXTRA = {'v5.9 trained (experimental)': ['value.hpp', 'value.cpp', 'value_weights.inc']}
+CPP_EXTRA = {'v5.9 flash': ['value.hpp', 'value.cpp', 'value_weights.inc']}
 # Measured on the tablet (moves/min from bot.log over 100+ moves). None = not measured.
 LIVE_SPEED = {'v1 original': None, 'v2 bitboard planner': None, 'v3 look-ahead': 29,
               'v3.1 line-clear skip': 39, 'v4 combos': 50,
@@ -55,7 +55,7 @@ LIVE_SPEED = {'v1 original': None, 'v2 bitboard planner': None, 'v3 look-ahead':
               'v5.6 hyperspeed': 156,  # same planner as v5.5.1: speed only
               'v5.7 speedbreaker': 165,  # released with the safe tray check (211 with the riskier one)
               'v5.8 mach1': 174,  # same planner as v5.7: speed only
-              'v5.9 trained (experimental)': 175}  # 174.7 over 889 moves; trained network plans
+              'v5.9 flash': 175}  # 174.7 over 889 moves; trained network plans
 
 WINDOW = current.COMBO_WINDOW
 
