@@ -305,6 +305,7 @@ std::vector<Move> plan(u64 board, const std::vector<Piece>& in, const Params& p,
         for (auto& [score, s] : ranked) score += combo_eval(s.board, s.since, p.combo_scale);
         std::stable_sort(ranked.begin(), ranked.end(), [](auto& a, auto& b) { return a.first > b.first; });
     }
+    State nn_best{}; bool nn_play = false;
     if (p.nn_future && nn_ready(1)) {  // v5.9: the network stands in for the sampled futures
         if ((int)ranked.size() > 3 * p.candidates) ranked.resize(3 * p.candidates);
         for (auto& [score, s] : ranked)
@@ -315,6 +316,7 @@ std::vector<Move> plan(u64 board, const std::vector<Piece>& in, const Params& p,
             const State& best = ranked[0].second;
             return std::vector<Move>(best.moves, best.moves + best.n);
         }
+        nn_best = ranked[0].second; nn_play = p.nn_record_only;
         if ((int)ranked.size() > p.nn_prune) ranked.resize(p.nn_prune);  // the look-ahead below picks among these
     }
     int filled = pc(ranked[0].second.board);
@@ -367,7 +369,7 @@ std::vector<Move> plan(u64 board, const std::vector<Piece>& in, const Params& p,
         }
         std::stable_sort(ranked.begin(), ranked.end(), [](auto& a, auto& b) { return a.first > b.first; });
     }
-    const State& best = ranked[0].second;
+    const State& best = nn_play ? nn_best : ranked[0].second;
     return std::vector<Move>(best.moves, best.moves + best.n);
 }
 

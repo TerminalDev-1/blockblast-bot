@@ -30,7 +30,7 @@ static bool set_param(Params& p, const std::string& kv) {
     else if (k == "candidates") p.candidates = (int)v; else if (k == "danger_from") p.danger_from = (int)v;
     else if (k == "danger_lookahead") p.danger_lookahead = (int)v; else if (k == "danger_candidates") p.danger_candidates = (int)v;
     else if (k == "look_width") p.look_width = (int)v; else if (k == "danger_depth") p.danger_depth = (int)v;
-    else if (k == "nn_weight") p.nn_weight = v; else if (k == "tail") p.tail = v;
+    else if (k == "nn_weight") p.nn_weight = v; else if (k == "nn_record_only") p.nn_record_only = v != 0; else if (k == "nn_prune") p.nn_prune = (int)v; else if (k == "tail") p.tail = v;
     else return false;
     return true;
 }

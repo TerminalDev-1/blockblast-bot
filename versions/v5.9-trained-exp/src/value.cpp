@@ -85,7 +85,7 @@ double nn_raw(const ValueNet& n, u64 board, int since) {
 }
 
 // The compiled-in network (value_weights.inc defines NN_SLOT and NN_W1 ... NN_B3), if any.
-#if __has_include("value_weights.inc")
+#if __has_include("value_weights.inc") && !defined(NN_BIG)
 #include "value_weights.inc"
 #define NN_BUILTIN 1
 #endif

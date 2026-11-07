@@ -46,6 +46,10 @@ struct Params {
     // v5.9 hybrid: with nn_future, keep the network's best nn_prune candidates and let the real
     // look-ahead decide between them (0 = the network decides alone).
     int nn_prune = 0;
+    // v5.9 training (DAgger): with nn_future and nn_prune, the look-ahead still runs on the
+    // network's best nn_prune candidates (so its verdicts get recorded), but the network's own
+    // choice is played. Teaches the network about the boards it reaches by itself.
+    bool nn_record_only = false;
     // v5.9 training: when set, every look-ahead verdict (board, combo state, value) is recorded.
     std::vector<struct FutureSample>* record = nullptr;
 };

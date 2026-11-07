@@ -12,8 +12,13 @@
 namespace bb {
 
 constexpr int NN_FEATURES = 64 + 11;
+#ifdef NN_BIG  // experiment: a wider network (build with -DNN_BIG)
+constexpr int NN_H1 = 128;
+constexpr int NN_H2 = 64;
+#else
 constexpr int NN_H1 = 64;
 constexpr int NN_H2 = 32;
+#endif
 constexpr int HORIZON = 10;          // trays (danger net)
 constexpr double FUTURE_SCALE = 100;  // future net output unit
 
