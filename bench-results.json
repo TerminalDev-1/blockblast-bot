@@ -108,5 +108,16 @@
   "mean_streak": 38.921052631578945,
   "live_moves_per_min": 165,
   "commit": "82bbd9d"
+ },
+ "v5.9 trained (experimental)": {
+  "games": 24,
+  "cap": 300,
+  "moves": 292.9583333333333,
+  "reached_cap": 23,
+  "lines_per_100": 48.513724932442045,
+  "best_streak": 76.125,
+  "mean_streak": 36.310344827586206,
+  "live_moves_per_min": 175,
+  "commit": "70c481b"
  }
 }

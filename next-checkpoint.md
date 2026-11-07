@@ -36,6 +36,9 @@ built or tested. Queued checkpoints are done **in version order, lowest number f
     v5.8 2190 (125 capped), at 3.6 vs ~44 ms/tray: 99% of v5.8's survival, a tie within noise
     (set seed 70000: 2197 vs 2114; set seed 90000: 2135 vs 2265). Hybrid (look-ahead on its best 8)
     was not better. This network (fnet3) is now compiled into the bot.
+  - **Training stopped here by the user (2026-11-07).** Benchmark updated (`bench.py`: v5.9 trained
+    (experimental), commit 70c481b, live 175). Testing done; it stays experimental until the user
+    releases it (or parks it).
 
 ## Done
 

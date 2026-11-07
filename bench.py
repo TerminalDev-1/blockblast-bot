@@ -36,10 +36,14 @@ VERSIONS = [
     ('v5.5 cpp max', 'e2f0115', 'cpp'),
     ('v5.5.1 (experimental)', '2847186', 'cpp'),
     ('v5.7 speedbreaker', '82bbd9d', 'cpp'),
+    ('v5.9 trained (experimental)', '70c481b', 'cpp'),
 ]
 # Where each C++ version's planner source lives in its commit.
 CPP_SRC = {'v5.5 cpp max': 'versions/v5.5-cpp-max/src', 'v5.5.1 (experimental)': 'versions/v5.5.1-exp/src',
-            'v5.7 speedbreaker': 'versions/v5.7-speedbreaker/src'}
+            'v5.7 speedbreaker': 'versions/v5.7-speedbreaker/src',
+            'v5.9 trained (experimental)': 'versions/v5.9-trained-exp/src'}
+# Extra source files a C++ version's planner needs (v5.9: the trained value network).
+CPP_EXTRA = {'v5.9 trained (experimental)': ['value.hpp', 'value.cpp', 'value_weights.inc']}
 # Measured on the tablet (moves/min from bot.log over 100+ moves). None = not measured.
 LIVE_SPEED = {'v1 original': None, 'v2 bitboard planner': None, 'v3 look-ahead': 29,
               'v3.1 line-clear skip': 39, 'v4 combos': 50,
@@ -50,7 +54,8 @@ LIVE_SPEED = {'v1 original': None, 'v2 bitboard planner': None, 'v3 look-ahead':
               'v5.4 highspeed max': 100, 'v5.5 cpp max': 139, 'v5.5.1 (experimental)': 154,
               'v5.6 hyperspeed': 156,  # same planner as v5.5.1: speed only
               'v5.7 speedbreaker': 165,  # released with the safe tray check (211 with the riskier one)
-              'v5.8 mach1': 174}  # same planner as v5.7: speed only
+              'v5.8 mach1': 174,  # same planner as v5.7: speed only
+              'v5.9 trained (experimental)': 175}  # 174.7 over 889 moves; trained network plans
 
 WINDOW = current.COMBO_WINDOW
 
@@ -65,7 +70,7 @@ def cpp_dll(label, commit):
     # Committed sources never change; the working tree is built once per run by the main
     # process (BB_DLL_READY), and the worker processes reuse it.
     if os.path.exists(out) and (commit or os.environ.get('BB_DLL_READY')): return out
-    files = ['planner.hpp', 'planner.cpp', 'capi.cpp']
+    files = ['planner.hpp', 'planner.cpp', 'capi.cpp'] + CPP_EXTRA.get(label, [])
     tmp = tempfile.mkdtemp(prefix='bbplan_')
     for f in files:
         data = (open(os.path.join(src, f), 'rb').read() if commit is None else
@@ -77,7 +82,8 @@ def cpp_dll(label, commit):
         found = glob.glob(os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Microsoft', 'WinGet', 'Packages', '*', 'mingw64', 'bin', 'g++.exe'))
         if found: gpp = found[0]
     subprocess.run([gpp, '-O2', '-mpopcnt', '-std=c++20', '-static', '-shared', '-o', out,
-                    os.path.join(tmp, 'capi.cpp'), os.path.join(tmp, 'planner.cpp')], check=True)
+                    os.path.join(tmp, 'capi.cpp'), os.path.join(tmp, 'planner.cpp')]
+                   + [os.path.join(tmp, f) for f in CPP_EXTRA.get(label, []) if f.endswith('.cpp')], check=True)
     return out
 
 
