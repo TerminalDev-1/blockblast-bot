@@ -25,6 +25,10 @@ built or tested. Queued checkpoints are done **in version order, lowest number f
     with the real look-ahead on its best 4: 2159 / 30 at 15 ms; best 8: 2220 / 29 at 24 ms.
   - Not yet better than v5.8. Next ideas: self-play rounds on boards the network itself reaches,
     a bigger network, more games per comparison (64 games is noisy).
+  - **Live (2026-11-07, real Block Blast over Wi-Fi, network-alone mode compiled into bbbot.exe):
+    174.7 moves/min over 889 moves in 305 s (176.8 after the first 100 moves), no game over or ad
+    pauses; planning logs 0.00 s per tray.** v5.8-mach1: 174. Planning was never the bottleneck
+    (the deal animation and Wi-Fi are), so the 13x faster planning doesn't raise live speed.
 
 ## Done
 
