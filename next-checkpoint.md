@@ -74,32 +74,16 @@ built or tested. Queued checkpoints are done **in version order, lowest number f
 
 ## Queued
 
-### v6 (exact name to confirm) — fully transformer network, from scratch
-- The user's idea (2026-11-07, while v5.9-trained-exp was being built): a second machine-learning
-  experiment that starts from **nothing**: no hand-made board measurements and no v5.8 planner to
-  learn from. The network learns to play purely by self-play in the simulator (reinforcement
-  learning), and the experiment also designs **its own training architecture**.
-- Goals (user): an **efficient architecture** (small, fast network) and **little training time**, for
-  **better results** than the hand-tuned planner.
-- Ideas: a small convolutional or bitboard network that sees only the 64 cells, the three pieces and
-  the combo state; trained AlphaZero/TD-style with the simulator as the environment; the bit-trick
-  move generator and multi-threaded self-play from v5.9 keep training fast.
-- **Architecture (user, 2026-11-07): fully transformer**, efficient to train, and it must **at least beat
-  v5.9** (v5.9-trained-exp's results). E.g. the 64 cells (plus the three pieces and the combo state) as
-  tokens into a small transformer encoder.
+### v6 (exact name to confirm) — a full transformer (not started)
+- The user's idea (2026-11-07). **Nothing is being done yet**; it waits in the queue until the user
+  starts it.
+- **Architecture (user): a full transformer, fully.** The whole network is a transformer, e.g. the
+  64 cells, the three pieces and the combo state as tokens into a small transformer encoder; no
+  hand-made board measurements.
+- Learns **from scratch** by self-play in the simulator (reinforcement learning), with its own training
+  setup designed for it.
+- Goals (user): **efficient to train** (small and fast, little training time) and it must **at least
+  beat v5.9-flash** (simulator survival 2166 moves avg over 256 games up to 3000 moves; 175 moves/min
+  live).
 - Plays the real Block Blast game on the tablet like every version (the 8x8 Agent client is not used).
-- Ask the user for the exact version name before starting (after v5.9-trained-exp is finished; the
-  v6.0-rust-edition-exp idea is also still in the hub).
-
-## Planned (not started; the user is still planning)
-
-### v6.0-rust-edition-exp (name to confirm when starting)
-- The user's idea (2026-11-07): a **Rust edition** of the bot, a new major version.
-- Goals: **higher scores** (beat the best score of 809,192; the planner so far is tuned for survival,
-  not points) and **more moves/min over Wi-Fi** than v5.8-mach1 (174).
-- Note from planning: Rust and C++ run at about the same speed (both compile to native code), and
-  planning is only ~2-5 ms of a ~1.0 s tray. The Wi-Fi gain has to come from the loop's design
-  (e.g. dragging pieces while the tray is still dealing, fewer frames per tray), which the rewrite is a
-  chance to redo. Switching to Rust changes the language rule in `CLAUDE.md` (C++ primary since v5.5)
-  only if the user releases it; the tablet helper stays Java.
-- Base: v5.8-mach1 (recommended default).
+- Ask the user for the exact version name before starting.
