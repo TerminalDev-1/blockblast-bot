@@ -22,6 +22,7 @@
 
 #include "device.hpp"
 #include "planner.hpp"
+#include "value.hpp"
 #include "vision.hpp"
 
 using namespace bb;
@@ -278,6 +279,9 @@ static void main_loop(const Args& args) {
     std::vector<TrayPiece> pieces; std::map<int, TrayPiece> by_slot;
     std::vector<std::string> why;
     Params params;
+    // v5.9-trained-exp: the trained network (compiled in) judges the candidates instead of the
+    // Monte Carlo look-ahead: about 13x less planning per tray in the simulator.
+    params.nn_future = nn_ready(1);
     double planned_at = 0;
     bool new_tray = false;  // carry holds a new tray read by wait_for_tray
     bool last_predragged = false;  // the tray's last drag was sent with the batch

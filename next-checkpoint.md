@@ -52,7 +52,7 @@ built or tested. Queued checkpoints are done **in version order, lowest number f
 
 ## Queued
 
-### (name to choose) — neural network from scratch
+### v6 (exact name to confirm) — fully transformer network, from scratch
 - The user's idea (2026-11-07, while v5.9-trained-exp was being built): a second machine-learning
   experiment that starts from **nothing**: no hand-made board measurements and no v5.8 planner to
   learn from. The network learns to play purely by self-play in the simulator (reinforcement
@@ -62,7 +62,12 @@ built or tested. Queued checkpoints are done **in version order, lowest number f
 - Ideas: a small convolutional or bitboard network that sees only the 64 cells, the three pieces and
   the combo state; trained AlphaZero/TD-style with the simulator as the environment; the bit-trick
   move generator and multi-threaded self-play from v5.9 keep training fast.
-- Ask the user for the version name before starting (after v5.9-trained-exp is finished).
+- **Architecture (user, 2026-11-07): fully transformer**, efficient to train, and it must **at least beat
+  v5.9** (v5.9-trained-exp's results). E.g. the 64 cells (plus the three pieces and the combo state) as
+  tokens into a small transformer encoder.
+- Plays the real Block Blast game on the tablet like every version (the 8x8 Agent client is not used).
+- Ask the user for the exact version name before starting (after v5.9-trained-exp is finished; the
+  v6.0-rust-edition-exp idea is also still in the hub).
 
 ## Planned (not started; the user is still planning)
 
