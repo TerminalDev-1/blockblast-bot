@@ -4,6 +4,7 @@
 // Returns how many moves were planned; out holds (slot, x, y) per move and the boards
 // after each move go to after[] (may be NULL).
 #include "planner.hpp"
+#include "value.hpp"
 
 using namespace bb;
 
@@ -16,6 +17,7 @@ extern "C" __declspec(dllexport) int bb_plan(unsigned long long board, int n, co
         pieces.push_back({slots[i], c});
     }
     Params p; p.threads = 1;  // bench.py runs games in parallel processes
+    p.nn_future = nn_ready(1);  // v5.9: the trained network judges candidates, as in the bot
     auto seq = plan(board, pieces, p, {}, since, seed);
     for (size_t i = 0; i < seq.size(); i++) {
         out[3 * i] = seq[i].slot; out[3 * i + 1] = seq[i].x; out[3 * i + 2] = seq[i].y;
