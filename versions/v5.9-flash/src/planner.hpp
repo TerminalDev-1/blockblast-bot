@@ -37,7 +37,7 @@ struct Params {
     int look_depth = 1;             // future trays played per sample on an open board
     int danger_depth = 2;           // future trays played per sample when the board is crowded (v5.5: 1)
     int threads = 0;            // look-ahead threads (0 = all cores but one)
-    // v5.9-trained-exp: weight of the trained value network's danger (chance of losing within
+    // v5.9-flash: weight of the trained value network's danger (chance of losing within
     // the next few trays) in a candidate's score. 0 = off (plays exactly like v5.8).
     double nn_weight = 0;
     // v5.9: judge candidates with the distilled look-ahead network instead of playing sampled

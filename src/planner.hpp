@@ -37,6 +37,21 @@ struct Params {
     int look_depth = 1;             // future trays played per sample on an open board
     int danger_depth = 2;           // future trays played per sample when the board is crowded (v5.5: 1)
     int threads = 0;            // look-ahead threads (0 = all cores but one)
+    // v5.9-flash: weight of the trained value network's danger (chance of losing within
+    // the next few trays) in a candidate's score. 0 = off (plays exactly like v5.8).
+    double nn_weight = 0;
+    // v5.9: judge candidates with the distilled look-ahead network instead of playing sampled
+    // futures (much faster). Needs the future net (slot 1).
+    bool nn_future = false;
+    // v5.9 hybrid: with nn_future, keep the network's best nn_prune candidates and let the real
+    // look-ahead decide between them (0 = the network decides alone).
+    int nn_prune = 0;
+    // v5.9 training (DAgger): with nn_future and nn_prune, the look-ahead still runs on the
+    // network's best nn_prune candidates (so its verdicts get recorded), but the network's own
+    // choice is played. Teaches the network about the boards it reaches by itself.
+    bool nn_record_only = false;
+    // v5.9 training: when set, every look-ahead verdict (board, combo state, value) is recorded.
+    std::vector<struct FutureSample>* record = nullptr;
 };
 
 extern const int COMBO_WINDOW;

@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "planner.hpp"
+#include "value.hpp"
 
 using namespace bb;
 
@@ -62,6 +63,7 @@ static bool set_param(Params& p, const std::string& kv) {
     else if (k == "combo_scale") p.combo_scale = v; else if (k == "tail") p.tail = v; else if (k == "danger_depth") p.danger_depth = (int)v; else if (k == "look_depth") p.look_depth = (int)v; else if (k == "fit_weight") p.fit_weight = v;
     else if (k == "w_empty") EVAL.empty = v; else if (k == "w_hole") EVAL.hole = v; else if (k == "w_pocket") EVAL.pocket = v;
     else if (k == "w_trans") EVAL.trans = v; else if (k == "w_square3") EVAL.square3 = v; else if (k == "w_line5") EVAL.line5 = v;
+    else if (k == "nn_weight") p.nn_weight = v; else if (k == "nn_record_only") p.nn_record_only = v != 0; else if (k == "nn_prune") p.nn_prune = (int)v; else if (k == "nn") return nn_load(kv.c_str() + eq + 1, 0); else if (k == "nnf") { p.nn_future = true; return nn_load(kv.c_str() + eq + 1, 1); }
     else if (k == "w_risk") EVAL.risk = v; else if (k == "w_room") EVAL.room = v;
     else return false;
     return true;

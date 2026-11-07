@@ -1,4 +1,4 @@
-// v5.9-trained-exp trainer (Adam, mini-batches), two modes:
+// v5.9-flash trainer (Adam, mini-batches), two modes:
 //   train out.bin epochs data.bin...            danger net: board -> lost within HORIZON trays
 //                                               (binary cross-entropy, danger boards weighted up)
 //   train out.bin epochs --future rec.bin...    future net: (board, combo state) -> v5.8's

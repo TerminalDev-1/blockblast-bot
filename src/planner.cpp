@@ -3,6 +3,7 @@
 // Combos: the game keeps a streak while a line is cleared within every COMBO_WINDOW
 // placements; `since` counts placements since the last clear.
 #include "planner.hpp"
+#include "value.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -296,17 +297,33 @@ std::vector<Move> plan(u64 board, const std::vector<Piece>& in, const Params& p,
     int most = 0;
     for (auto& s : finished) most = std::max<int>(most, s.n);
     std::vector<std::pair<double, State>> ranked;
-    for (auto& s : finished) if (s.n == most) ranked.push_back({s.reward + fit_eval(s.board), s});
+    auto danger = [&](u64 b) { return p.nn_weight > 0 ? p.nn_weight * nn_danger(b) : 0.0; };
+    for (auto& s : finished) if (s.n == most) ranked.push_back({s.reward + fit_eval(s.board) - danger(s.board), s});
     std::stable_sort(ranked.begin(), ranked.end(), [](auto& a, auto& b) { return a.first > b.first; });
     if (combo) {  // only the leaders get the (slower) combo term
         if (ranked.size() > 40) ranked.resize(40);
         for (auto& [score, s] : ranked) score += combo_eval(s.board, s.since, p.combo_scale);
         std::stable_sort(ranked.begin(), ranked.end(), [](auto& a, auto& b) { return a.first > b.first; });
     }
+    State nn_best{}; bool nn_play = false;
+    if (p.nn_future && nn_ready(1)) {  // v5.9: the network stands in for the sampled futures
+        if ((int)ranked.size() > 3 * p.candidates) ranked.resize(3 * p.candidates);
+        for (auto& [score, s] : ranked)
+            score = s.reward + p.fit_weight * fit_eval(s.board) + nn_future(s.board, combo ? s.since : COMBO_WINDOW)
+                  + (combo ? combo_eval(s.board, s.since, p.combo_scale) : 0.0) - danger(s.board);
+        std::stable_sort(ranked.begin(), ranked.end(), [](auto& a, auto& b) { return a.first > b.first; });
+        if (p.nn_prune <= 0 || ranked.size() <= 1) {
+            const State& best = ranked[0].second;
+            return std::vector<Move>(best.moves, best.moves + best.n);
+        }
+        nn_best = ranked[0].second; nn_play = p.nn_record_only;
+        if ((int)ranked.size() > p.nn_prune) ranked.resize(p.nn_prune);  // the look-ahead below picks among these
+    }
     int filled = pc(ranked[0].second.board);
     int lookahead = p.lookahead, candidates = p.candidates;
     int depth = p.look_depth;
     if (filled >= p.danger_from) { lookahead = std::max(lookahead, p.danger_lookahead); candidates = std::max(candidates, p.danger_candidates); depth = p.danger_depth; }
+    if (p.nn_future && p.nn_prune > 0) candidates = p.nn_prune;
     if (lookahead > 0 && ranked.size() > 1 && filled >= p.min_filled) {
         if ((int)ranked.size() > candidates) ranked.resize(candidates);
         std::mt19937_64 rng(seed ^ board);
@@ -346,11 +363,13 @@ std::vector<Move> plan(u64 board, const std::vector<Piece>& in, const Params& p,
                 double worst = 0; for (size_t k = 0; k < q; k++) worst += v[k]; worst /= q;
                 future = (1 - p.tail) * mean + p.tail * worst;
             }
-            ranked[i].first = s.reward + p.fit_weight * fit_eval(s.board) + future + (combo ? combo_eval(s.board, s.since, p.combo_scale) : 0.0);
+            if (p.record) p.record->push_back({s.board, (int8_t)(combo ? s.since : COMBO_WINDOW), (float)future});
+            ranked[i].first = s.reward + p.fit_weight * fit_eval(s.board) + future + (combo ? combo_eval(s.board, s.since, p.combo_scale) : 0.0)
+                              - danger(s.board);
         }
         std::stable_sort(ranked.begin(), ranked.end(), [](auto& a, auto& b) { return a.first > b.first; });
     }
-    const State& best = ranked[0].second;
+    const State& best = nn_play ? nn_best : ranked[0].second;
     return std::vector<Move>(best.moves, best.moves + best.n);
 }
 

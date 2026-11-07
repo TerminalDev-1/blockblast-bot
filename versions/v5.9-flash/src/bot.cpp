@@ -279,7 +279,7 @@ static void main_loop(const Args& args) {
     std::vector<TrayPiece> pieces; std::map<int, TrayPiece> by_slot;
     std::vector<std::string> why;
     Params params;
-    // v5.9-trained-exp: the trained network (compiled in) judges the candidates instead of the
+    // v5.9-flash: the trained network (compiled in) judges the candidates instead of the
     // Monte Carlo look-ahead: about 13x less planning per tray in the simulator.
     params.nn_future = nn_ready(1);
     double planned_at = 0;

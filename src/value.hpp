@@ -1,4 +1,4 @@
-// v5.9-trained-exp: small neural networks that judge boards, trained by self-play in the
+// v5.9-flash: small neural networks that judge boards, trained by self-play in the
 // simulator (datagen.cpp, train.cpp). Two kinds:
 //   danger (slot 0): chance the game is lost within the next HORIZON trays.
 //   future (slot 1): what v5.8's Monte Carlo look-ahead would conclude about a board

@@ -1,4 +1,4 @@
-// v5.9-trained-exp self-play data: plays simulated games and writes every end-of-tray board
+// v5.9-flash self-play data: plays simulated games and writes every end-of-tray board
 // with its label: 1 if the game was lost within HORIZON trays, else 0. Boards from the last
 // HORIZON trays of a game that hit the move cap are left out (their outcome is unknown).
 // usage: datagen out.bin games cap seed [nn=weights.bin] [name=value ...]  (same names as sim.exe)

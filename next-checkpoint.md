@@ -6,8 +6,17 @@ built or tested. Queued checkpoints are done **in version order, lowest number f
 
 ## In progress
 
-### v5.9-trained-exp
-- Name chosen by the user (2026-11-07). Based on v5.8-mach1. Built in `versions/v5.9-trained-exp/`.
+(nothing in progress)
+
+## Done
+
+### v5.9-flash (released 2026-11-07; built as v5.9-trained-exp)
+- Machine learning: a distilled look-ahead network plans 12x faster, ties v5.8 in the simulator
+  (2166 vs 2190 moves over 256 games), 175 moves/min live. Released and named by the user.
+  Full notes from the build below.
+
+#### Build notes (v5.9-trained-exp)
+- Name chosen by the user (2026-11-07). Based on v5.8-mach1. Built in `versions/v5.9-trained-exp/` (now `versions/v5.9-flash/`).
 - Idea (user): back to Block Blast after the 8x8 Agent side project, and **train** the bot with **machine
   learning**: "the most efficient architecture possible in the least time possible".
 - Plan: self-play in the simulator with the v5.8 planner records boards and whether the game died soon
@@ -40,7 +49,6 @@ built or tested. Queued checkpoints are done **in version order, lowest number f
     (experimental), commit 70c481b, live 175). Testing done; it stays experimental until the user
     releases it (or parks it).
 
-## Done
 
 ### v5.8-mach1 (released)
 - 174 moves/min live over Wi-Fi (target was 210; ~1.0 s per tray is the Wi-Fi floor). Released by the user's
