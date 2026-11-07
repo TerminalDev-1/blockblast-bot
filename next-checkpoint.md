@@ -29,6 +29,13 @@ built or tested. Queued checkpoints are done **in version order, lowest number f
     174.7 moves/min over 889 moves in 305 s (176.8 after the first 100 moves), no game over or ad
     pauses; planning logs 0.00 s per tray.** v5.8-mach1: 174. Planning was never the bottleneck
     (the deal animation and Wi-Fi are), so the 13x faster planning doesn't raise live speed.
+  - **Training round 2 (self-play / DAgger):** the network played 120 games itself while the
+    look-ahead (96 futures) graded the boards it reached: 1.9M more verdicts, 6.1M in total; retrained
+    (correlation 0.914; a 2x wider net reached 0.920 but played no better, so the small one stays).
+    On 256 fresh games (two sets of 128, cap 3000): network alone 2166 moves avg (117 capped) vs
+    v5.8 2190 (125 capped), at 3.6 vs ~44 ms/tray: 99% of v5.8's survival, a tie within noise
+    (set seed 70000: 2197 vs 2114; set seed 90000: 2135 vs 2265). Hybrid (look-ahead on its best 8)
+    was not better. This network (fnet3) is now compiled into the bot.
 
 ## Done
 
