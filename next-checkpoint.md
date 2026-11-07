@@ -34,25 +34,17 @@ built or tested. Queued checkpoints are done **in version order, lowest number f
 
 ## Queued
 
-### v5.7-speedbreaker
-- Name chosen by the user. Next in order (v5.6-hyperspeed is released).
-- Goal (raised by the user): **200 moves/min**, clearly faster than v5.6-hyperspeed (156), breaking the
-  ceiling of the v5.5/v5.6 loop. The fastest checkpoint so far.
-- **A much lighter, more efficient architecture.** Ideas to explore:
-  - plan while the next tray's deal animation is still finishing (the deal, ~0.5 s per tray, is
-    the one cost the game imposes);
-  - overlap each drag with the previous drop's check (a second helper connection);
-  - a leaner main loop: fewer screenshots per tray, nothing that waits without a reason.
-- **Far more intelligent than v5.6 ("ridiculously" more, in the user's words):** excel at long-horizon survival (beat v5.5.1-exp's
-  simulator results: 54 of 128 games lasting 3000 moves) while keeping breakneck speed. Use the
-  spare planning time (planning is ~3 ms of a ~1 s tray) for a deeper search.
-- Provisional until the user approves it (one yes to release, as its name has no `-exp`).
+(nothing queued)
 
-### v5.8-mach1-exp
-- Name chosen by the user ("v5.8-Mach 1"); `-exp` added (new checkpoints are experimental by default from v5.8 on). Only after v5.7-speedbreaker is done.
-- Goal: **run at the speed ceiling: 210 moves/min** (the user said "210 moves per second"; per
-  minute is the ceiling estimated for this game: the deal animation alone takes ~0.5 s per tray,
-  so a tray of 3 moves can't take less than ~0.85 s). Confirm the unit with the user when starting.
-- Builds on whatever v5.7-speedbreaker achieves; every part of a tray except the game's own deal
-  animation has to be close to zero (drags, checks, reading, planning all overlapped).
-- Provisional until the user approves it (one yes to release, as its name has no `-exp`).
+## Planned (not started; the user is still planning)
+
+### v6.0-rust-edition-exp (name to confirm when starting)
+- The user's idea (2026-11-07): a **Rust edition** of the bot, a new major version.
+- Goals: **higher scores** (beat the best score of 809,192; the planner so far is tuned for survival,
+  not points) and **more moves/min over Wi-Fi** than v5.8-mach1 (174).
+- Note from planning: Rust and C++ run at about the same speed (both compile to native code), and
+  planning is only ~2-5 ms of a ~1.0 s tray. The Wi-Fi gain has to come from the loop's design
+  (e.g. dragging pieces while the tray is still dealing, fewer frames per tray), which the rewrite is a
+  chance to redo. Switching to Rust changes the language rule in `CLAUDE.md` (C++ primary since v5.5)
+  only if the user releases it; the tablet helper stays Java.
+- Base: v5.8-mach1 (recommended default).
