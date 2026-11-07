@@ -40,13 +40,11 @@ It lives in the Block Blast bot repo for now; it moves to the game's own repo on
   app version every time. The app is shipped rarely; the agent is updated on its own side.
 - It is still core gameplay: with no agent connected, the game waits ("waiting for agent") and nothing
   is played.
-- Where the agent runs (to decide, see open questions):
-  - **On the PC** (suggested): the existing C++ planner, connected over USB or Wi-Fi through ADB
-    (`adb forward`, like the Block Blast helper). A move is a few bytes, not a screenshot, so Wi-Fi is
-    milliseconds per move, not the old ~1 s per tray. Updating the agent = rebuild on the PC, no app
-    update at all.
-  - **On the tablet as a separate small agent app**: no PC needed, but updating the agent still means
-    reinstalling that agent app.
+- **The agent runs on the PC** (decided by the user, 2026-11-07): the existing C++ planner, connected
+  over USB or Wi-Fi through ADB (`adb forward`, like the Block Blast helper; `adbwifi.py`-style
+  USB-else-Wi-Fi). A move is a few bytes, not a screenshot, so Wi-Fi is milliseconds per move, not the
+  old ~1 s per tray. Updating the agent = rebuild on the PC, no app update at all. (A separate agent
+  app on the tablet was rejected: every agent change would mean reinstalling it.)
 - **Protection:** the game only accepts the agent on a local socket that is reachable through ADB (not
   open on the network), so other apps or devices can't take over the user's game.
 - Built-in agent (planner inside the app) is a possible **future idea, sidelined** by the user.
@@ -66,7 +64,7 @@ It lives in the Block Blast bot repo for now; it moves to the game's own repo on
   idea for the tablet bot stays in the hub as a plan.
 
 ## Open questions
-1. Where the agent runs: on the PC (suggested) or as a separate agent app on the tablet?
+1. (decided: agent on the PC)
 2. Build it in this chat or a new session? (Always ask the user; never start a session on your own.)
 3. License: GPL v3 (suggested).
 4. Visual style / theme of the game.
