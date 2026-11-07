@@ -20,8 +20,12 @@ It lives in the Block Blast bot repo for now; it moves to the game's own repo on
   the board from the game's own state and places pieces through the game's own code.
 - **Animations and high scores** like a real game: line-clear effects, combo pop-ups, score that counts
   up, high-score table.
-- **Agent speed dial**: throttle the agent's moves per minute (e.g. 1x / 2x / 5x / 10x) up to a
-  comfortable ceiling where animations still look good, plus an uncapped mode for benchmarks.
+- **Agent speed is fixed by the user, not configurable in the app** (rule set by the user). There is no
+  speed dial. The user sets the agent's moves/min (a comfortable ceiling where animations still look
+  good) in the source code; changing it means a code change and a new app version, like any change to the
+  agent. Benchmarks run in the simulator, not through an app setting.
+- **Nothing about the agent is user-configurable in the app** (rule set by the user): not the planner,
+  not its speed. The app only shows the agent playing.
 
 - **Open source**, in its own public repo (GPL v3 suggested, same as the Block Blast bot).
 
@@ -33,8 +37,7 @@ It lives in the Block Blast bot repo for now; it moves to the game's own repo on
 - **The planner is locked inside the app (rule set by the user).** The app never lets anyone change the
   planner: no settings screen for weights, look-ahead, danger mode or planner versions, and nothing
   else in the app can modify its internal state. Only the developers change those settings, in the source
-  code, tested in the simulator, then rebuilt into a new app version. (The speed dial only sets how fast
-  the agent plays; it doesn't touch the planner.)
+  code, tested in the simulator, then rebuilt into a new app version.
 - Tuning still works on the PC: `build\sim.exe` and `bench.py` keep benchmarking planner changes.
 - To keep the tuning valid, the game uses the same piece list and dealing rules the simulator uses
   (v5.4's piece list). Changing those later means re-tuning in the simulator.
@@ -48,11 +51,11 @@ It lives in the Block Blast bot repo for now; it moves to the game's own repo on
 2. Build it in this chat or a new session? (Always ask the user; never start a session on your own.)
 3. Repo folder: next to `blockblast bot/` in `Desktop\fun` (suggested); license GPL v3 (suggested).
 4. Visual style / theme of the game.
-5. Speed dial levels and the "comfortable ceiling" number.
+5. The agent's fixed speed (moves/min), set by the user.
 6. Does a human also play it (agent on/off), or is it agent-only?
 
 ## Rough build order (once planning is done)
 1. Game core in Kotlin: board, pieces, dealing, clears, scoring, combos, game over.
 2. Screen + animations + high scores.
-3. Planner via NDK/JNI; agent plays at the dial's speed.
+3. Planner via NDK/JNI; agent plays at the fixed speed.
 4. Live test on the tablet: moves/min and scores.
