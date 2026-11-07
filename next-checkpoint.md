@@ -16,6 +16,15 @@ built or tested. Queued checkpoints are done **in version order, lowest number f
   retrain it on its own games.
 - Targets (proposed, to confirm with the user): longer survival than v5.8 in the simulator (64 fresh
   games up to 3000 moves) with less planning time per tray, and live moves/min at least v5.8's 174.
+- Results so far (simulator, 64 games up to 3000 moves, seed 50000; v5.8: 2303 moves avg, 35 capped,
+  48 ms/tray):
+  - Danger net (lost within 10 trays, from fast-policy games): AUC 0.715 vs 0.692 for v5.8's
+    `fit_eval`, but it made play worse at weights 100-300 (only weight 30 was even).
+  - Distilled look-ahead net (`nnf`, trained on 4.1M look-ahead verdicts incl. 48 candidates per
+    tray; correlation 0.916): alone 2057 moves / 28 capped at 3.6 ms/tray (13x faster planning);
+    with the real look-ahead on its best 4: 2159 / 30 at 15 ms; best 8: 2220 / 29 at 24 ms.
+  - Not yet better than v5.8. Next ideas: self-play rounds on boards the network itself reaches,
+    a bigger network, more games per comparison (64 games is noisy).
 
 ## Done
 
