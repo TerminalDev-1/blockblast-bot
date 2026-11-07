@@ -6,7 +6,16 @@ built or tested. Queued checkpoints are done **in version order, lowest number f
 
 ## In progress
 
-(nothing in progress)
+### v5.9-trained-exp
+- Name chosen by the user (2026-11-07). Based on v5.8-mach1. Built in `versions/v5.9-trained-exp/`.
+- Idea (user): back to Block Blast after the 8x8 Agent side project, and **train** the bot with **machine
+  learning**: "the most efficient architecture possible in the least time possible".
+- Plan: self-play in the simulator with the v5.8 planner records boards and whether the game died soon
+  after; a small neural network (plain C++, no new dependencies) learns to rate a board's danger; the
+  planner uses it in place of (or next to) the slow Monte Carlo look-ahead; a few self-play rounds
+  retrain it on its own games.
+- Targets (proposed, to confirm with the user): longer survival than v5.8 in the simulator (64 fresh
+  games up to 3000 moves) with less planning time per tray, and live moves/min at least v5.8's 174.
 
 ## Done
 
@@ -34,7 +43,17 @@ built or tested. Queued checkpoints are done **in version order, lowest number f
 
 ## Queued
 
-(nothing queued)
+### (name to choose) — neural network from scratch
+- The user's idea (2026-11-07, while v5.9-trained-exp was being built): a second machine-learning
+  experiment that starts from **nothing**: no hand-made board measurements and no v5.8 planner to
+  learn from. The network learns to play purely by self-play in the simulator (reinforcement
+  learning), and the experiment also designs **its own training architecture**.
+- Goals (user): an **efficient architecture** (small, fast network) and **little training time**, for
+  **better results** than the hand-tuned planner.
+- Ideas: a small convolutional or bitboard network that sees only the 64 cells, the three pieces and
+  the combo state; trained AlphaZero/TD-style with the simulator as the environment; the bit-trick
+  move generator and multi-threaded self-play from v5.9 keep training fast.
+- Ask the user for the version name before starting (after v5.9-trained-exp is finished).
 
 ## Planned (not started; the user is still planning)
 
